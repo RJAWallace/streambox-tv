@@ -218,6 +218,34 @@ interface SupabaseApi {
         @Body record: SyncStateRecord
     )
 
+    // ========== User Accounts (Code-based auth) ==========
+
+    @GET("rest/v1/user_accounts")
+    suspend fun getUserByCode(
+        @Header("Authorization") auth: String = "Bearer ${Constants.SUPABASE_ANON_KEY}",
+        @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
+        @Query("invite_code") inviteCode: String,
+        @Query("select") select: String = "id,invite_code,name"
+    ): List<UserAccountRecord>
+
+    // ========== Account Sync State ==========
+
+    @GET("rest/v1/account_sync_state")
+    suspend fun getAccountSyncState(
+        @Header("Authorization") auth: String = "Bearer ${Constants.SUPABASE_ANON_KEY}",
+        @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
+        @Query("user_id") userId: String,
+        @Query("select") select: String = "*"
+    ): List<AccountSyncStateRecord>
+
+    @POST("rest/v1/account_sync_state")
+    suspend fun upsertAccountSyncState(
+        @Header("Authorization") auth: String = "Bearer ${Constants.SUPABASE_ANON_KEY}",
+        @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
+        @Header("Prefer") prefer: String = "resolution=merge-duplicates",
+        @Body record: AccountSyncStateRecord
+    )
+
     // ========== Bulk Operations ==========
 
     @POST("rest/v1/watched_episodes")
@@ -339,6 +367,19 @@ data class EpisodeProgressRecord(
  * Sync state record - tracks Trakt sync status per user
  * Unique constraint: (user_id)
  */
+data class UserAccountRecord(
+    val id: String,
+    @SerializedName("invite_code") val inviteCode: String,
+    val name: String,
+    @SerializedName("created_at") val createdAt: String? = null
+)
+
+data class AccountSyncStateRecord(
+    @SerializedName("user_id") val userId: String,
+    val payload: String? = null,
+    @SerializedName("updated_at") val updatedAt: String? = null
+)
+
 data class SyncStateRecord(
     @SerializedName("user_id") val userId: String,
     @SerializedName("last_sync_at") val lastSyncAt: String? = null,

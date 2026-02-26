@@ -946,27 +946,11 @@ class HomeViewModel @Inject constructor(
                     return@launch
                 }
 
-                // Priority: Supabase cloud (syncs across devices) > Trakt > Local cache
-                val supabaseItems = try {
+                // Load Continue Watching from Supabase (sole source of truth)
+                val resolvedContinueWatching = try {
                     loadContinueWatchingFromHistory()
                 } catch (_: Exception) {
                     emptyList()
-                }
-                val resolvedContinueWatching = if (supabaseItems.isNotEmpty()) {
-                    supabaseItems
-                } else {
-                    // Fallback to Trakt/local cache only when Supabase has no data
-                    val continueWatching = try {
-                        traktRepository.getContinueWatching()
-                    } catch (_: Exception) {
-                        emptyList()
-                    }
-                    val cachedContinueWatching = traktRepository.getCachedContinueWatching()
-                    when {
-                        continueWatching.isNotEmpty() -> continueWatching
-                        cachedContinueWatching.isNotEmpty() -> cachedContinueWatching
-                        else -> emptyList()
-                    }
                 }
 
                 if (resolvedContinueWatching.isNotEmpty()) {

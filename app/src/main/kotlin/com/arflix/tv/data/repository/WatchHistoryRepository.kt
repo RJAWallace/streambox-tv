@@ -105,13 +105,17 @@ class WatchHistoryRepository @Inject constructor(
                 supabaseApi.upsertWatchHistory(auth = auth, item = entry.toRecord())
             }
         } catch (e: HttpException) {
+            System.err.println("WatchHistory: save failed (HTTP ${e.code()}), retrying without stream fields")
             runCatching {
                 val fallback = entry.copy(stream_key = null, stream_addon_id = null, stream_title = null)
                 executeSupabaseCall("save watch progress fallback") { auth ->
                     supabaseApi.upsertWatchHistory(auth = auth, item = fallback.toRecord())
                 }
+            }.onFailure { e2 ->
+                System.err.println("WatchHistory: fallback save also failed: ${e2.message}")
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            System.err.println("WatchHistory: save failed: ${e.message}")
         }
     }
 

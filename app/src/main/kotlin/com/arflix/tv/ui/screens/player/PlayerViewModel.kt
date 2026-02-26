@@ -1326,7 +1326,7 @@ class PlayerViewModel @Inject constructor(
     fun saveProgress(position: Long, duration: Long, progressPercent: Int, isPlaying: Boolean, playbackState: Int) {
         if (duration <= 0) return
 
-        if (progressSaveJob?.isActive == true) return
+        progressSaveJob?.cancel()
         progressSaveJob = viewModelScope.launch(Dispatchers.IO) {
             val currentTime = System.currentTimeMillis()
             val progressFraction = (progressPercent / 100f).coerceIn(0f, 1f)

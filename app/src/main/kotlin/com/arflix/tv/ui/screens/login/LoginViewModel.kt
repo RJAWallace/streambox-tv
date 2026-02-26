@@ -1,7 +1,5 @@
 package com.arflix.tv.ui.screens.login
 
-import androidx.credentials.GetCredentialRequest
-import androidx.credentials.GetCredentialResponse
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.repository.AuthRepository
@@ -18,8 +16,7 @@ import javax.inject.Inject
 data class LoginUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
-    val authState: AuthState = AuthState.Loading,
-    val googleSignInRequest: GetCredentialRequest? = null
+    val authState: AuthState = AuthState.Loading
 )
 
 @HiltViewModel
@@ -27,31 +24,33 @@ class LoginViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val streamRepository: StreamRepository
 ) : ViewModel() {
-    
+
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
-    
+
     init {
-        // Observe auth state
         viewModelScope.launch {
             authRepository.authState.collect { authState ->
                 _uiState.update { it.copy(authState = authState) }
             }
         }
     }
-    
-    fun signIn(email: String, password: String) {
-        if (email.isBlank() || password.isBlank()) {
-            _uiState.update { it.copy(error = "Please enter email and password") }
+
+    /**
+     * Log in with a 5-letter invite code
+     */
+    fun loginWithCode(code: String) {
+        val trimmed = code.trim().uppercase()
+        if (trimmed.isBlank()) {
+            _uiState.update { it.copy(error = "Please enter your access code") }
             return
         }
 
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            val result = authRepository.signIn(email, password)
+            val result = authRepository.loginWithCode(trimmed)
 
-            // Sync addons from cloud after successful login
             if (result.isSuccess) {
                 streamRepository.syncAddonsFromCloud()
             }
@@ -64,68 +63,8 @@ class LoginViewModel @Inject constructor(
             }
         }
     }
-    
-    fun signUp(email: String, password: String) {
-        if (email.isBlank() || password.isBlank()) {
-            _uiState.update { it.copy(error = "Please enter email and password") }
-            return
-        }
 
-        if (password.length < 6) {
-            _uiState.update { it.copy(error = "Password must be at least 6 characters") }
-            return
-        }
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
-
-            val result = authRepository.signUp(email, password)
-
-            _uiState.update { state ->
-                state.copy(
-                    isLoading = false,
-                    error = result.exceptionOrNull()?.message
-                )
-            }
-        }
-    }
-
-    /**
-     * Initiate Google Sign-In - returns the request for the Activity to handle
-     */
-    fun getGoogleSignInRequest(): GetCredentialRequest {
-        return authRepository.getGoogleSignInRequest()
-    }
-
-    /**
-     * Handle Google Sign-In result from the Activity
-     */
-    fun handleGoogleSignInResult(result: GetCredentialResponse) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
-
-            val authResult = authRepository.handleGoogleSignInResult(result)
-
-            // Sync addons from cloud after successful login
-            if (authResult.isSuccess) {
-                streamRepository.syncAddonsFromCloud()
-            }
-
-            _uiState.update { state ->
-                state.copy(
-                    isLoading = false,
-                    error = authResult.exceptionOrNull()?.message
-                )
-            }
-        }
-    }
-
-    /**
-     * Handle Google Sign-In error
-     */
-    fun handleGoogleSignInError(error: String) {
-        _uiState.update { it.copy(isLoading = false, error = error) }
-    }
+    // Legacy methods kept for compile compatibility
+    fun signIn(email: String, password: String) = loginWithCode(password)
+    fun signUp(email: String, password: String) = loginWithCode(password)
 }
-
-

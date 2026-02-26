@@ -31,7 +31,16 @@
       "Bash(git branch -M main)",
       "Bash(git push -u origin main)",
       "Bash(git rm -r --cached .jdk)",
-      "Bash(git commit --amend -m \"StreamBox v1.0 - Supabase-first Continue Watching with cross-device sync\" --no-verify)"
+      "Bash(git commit --amend -m \"StreamBox v1.0 - Supabase-first Continue Watching with cross-device sync\" --no-verify)",
+      "Bash(gh release:*)",
+      "Bash(gh repo view RJAWallace/streambox-tv --json visibility -q '.visibility')",
+      "Bash(gh repo edit RJAWallace/streambox-tv --visibility public)",
+      "Bash(gh repo edit RJAWallace/streambox-tv --visibility public --accept-visibility-change-consequences)",
+      "Bash(./gradlew assembleDebug)",
+      "Bash(git add app/src/main/kotlin/com/arflix/tv/ui/screens/details/DetailsViewModel.kt app/src/main/kotlin/com/arflix/tv/data/repository/WatchHistoryRepository.kt app/src/main/kotlin/com/arflix/tv/data/repository/TraktSyncService.kt app/src/main/kotlin/com/arflix/tv/data/repository/AuthRepository.kt app/src/main/kotlin/com/arflix/tv/data/repository/ProfileRepository.kt)",
+      "Bash(git commit:*)",
+      "Bash(git push)",
+      "Bash(./gradlew compileDebugKotlin)"
     ]
   }
 }

@@ -198,7 +198,7 @@ fun PlayerScreen(
 
     // Buffering watchdog - detect stuck buffering
     var bufferingStartTime by remember { mutableStateOf<Long?>(null) }
-    val bufferingTimeoutMs = 25_000L // Mid-playback timeout for stuck buffering
+    val bufferingTimeoutMs = 45_000L // Mid-playback timeout for stuck buffering (increased for slow CDNs)
     var userSelectedSourceManually by remember { mutableStateOf(false) }
     val allowStartupSourceFallback = true
     val allowMidPlaybackSourceFallback = false
@@ -216,6 +216,8 @@ fun PlayerScreen(
     var startupHardFailureReported by remember { mutableStateOf(false) }
     var startupSameSourceRetryCount by remember { mutableIntStateOf(0) }
     var startupSameSourceRefreshAttempted by remember { mutableStateOf(false) }
+    var midStreamRetryCount by remember { mutableIntStateOf(0) }
+    val midStreamMaxRetries = 2
     var startupUrlLock by remember { mutableStateOf<String?>(null) }
     var dvStartupFallbackStage by remember { mutableIntStateOf(0) } // 0=none, 1=HEVC forced, 2=AVC forced
     var blackVideoRecoveryStage by remember { mutableIntStateOf(0) } // 0=none, 1=HEVC forced, 2=AVC forced
@@ -430,6 +432,7 @@ fun PlayerScreen(
                     }
 
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        val thisPlayer = this@apply
                         // Source/decoder/network errors on startup should fail over to another source.
                         // Error codes: https://developer.android.com/reference/androidx/media3/common/PlaybackException
                         val isSourceError = error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
@@ -505,6 +508,22 @@ fun PlayerScreen(
                                 !userSelectedSourceManually &&
                                 tryAdvanceToNextStream()
                             ) {
+                                return
+                            }
+                            // Mid-stream retry: if playback was working, try to restart same source
+                            if (hasPlaybackStarted && midStreamRetryCount < midStreamMaxRetries) {
+                                midStreamRetryCount++
+                                val retryDelayMs = if (midStreamRetryCount == 1) 2000L else 5000L
+                                coroutineScope.launch {
+                                    kotlinx.coroutines.delay(retryDelayMs)
+                                    if (!playerReleased) {
+                                        try {
+                                            thisPlayer.stop()
+                                            thisPlayer.prepare()
+                                            thisPlayer.playWhenReady = true
+                                        } catch (_: Exception) {}
+                                    }
+                                }
                                 return
                             }
                             if (!playbackIssueReported) {
