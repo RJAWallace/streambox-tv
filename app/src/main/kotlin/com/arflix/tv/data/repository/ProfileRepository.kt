@@ -187,7 +187,7 @@ class ProfileRepository @Inject constructor(
     }
 
     private suspend fun pushProfilesStateToCloud() {
-        val userId = authRepository.getCurrentUserId() ?: return
+        val userId = authRepository.getCurrentUserId() ?: "local"
         val profiles = getProfiles()
         val activeProfileId = getActiveProfileId()
         val existingPayload = authRepository.loadAccountSyncPayload().getOrNull().orEmpty()

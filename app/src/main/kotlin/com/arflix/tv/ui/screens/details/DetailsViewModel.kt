@@ -439,7 +439,7 @@ class DetailsViewModel @Inject constructor(
                     val resumeInfo = runCatching { resumeDeferred.await() }.getOrNull()
                     if (resumeInfo != null) {
                         // Fast path: show Continue immediately from local history.
-                        val playTarget = buildPlayTarget(mediaType, null, resumeInfo)
+                        val playTarget = buildPlayTarget(mediaType, null, resumeInfo, initialSeason, initialEpisode)
                         updateState { state ->
                             state.copy(
                                 playSeason = playTarget?.season,
@@ -450,7 +450,7 @@ class DetailsViewModel @Inject constructor(
                         }
                     } else {
                         val seasonProgressResult = runCatching { seasonProgressDeferred?.await() }.getOrNull()
-                        val playTarget = buildPlayTarget(mediaType, seasonProgressResult, null)
+                        val playTarget = buildPlayTarget(mediaType, seasonProgressResult, null, initialSeason, initialEpisode)
                         updateState { state ->
                             state.copy(
                                 playSeason = playTarget?.season,
@@ -1126,7 +1126,9 @@ class DetailsViewModel @Inject constructor(
     private fun buildPlayTarget(
         mediaType: MediaType,
         result: SeasonProgressResult?,
-        resumeInfo: ResumeInfo?
+        resumeInfo: ResumeInfo?,
+        initialSeason: Int? = null,
+        initialEpisode: Int? = null
     ): PlayTarget? {
         if (resumeInfo != null) {
             return PlayTarget(
@@ -1134,6 +1136,14 @@ class DetailsViewModel @Inject constructor(
                 episode = resumeInfo.episode,
                 label = resumeInfo.label,
                 positionMs = resumeInfo.positionMs
+            )
+        }
+        // If we were navigated here from Continue Watching with a specific episode, use that
+        if (initialSeason != null && initialEpisode != null) {
+            return PlayTarget(
+                season = initialSeason,
+                episode = initialEpisode,
+                label = "Continue S${initialSeason}E${initialEpisode}"
             )
         }
         if (mediaType == MediaType.MOVIE) return null

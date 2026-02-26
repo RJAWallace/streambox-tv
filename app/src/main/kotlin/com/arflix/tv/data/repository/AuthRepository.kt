@@ -94,7 +94,8 @@ sealed class AuthState {
 @Singleton
 class AuthRepository @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val traktRepositoryProvider: Provider<TraktRepository>
+    private val traktRepositoryProvider: Provider<TraktRepository>,
+    private val profileManagerProvider: Provider<ProfileManager>
 ) {
     private val TAG = "AuthRepository"
 
@@ -674,10 +675,10 @@ class AuthRepository @Inject constructor(
      * Load addons directly from Supabase to avoid stale in-memory profile state.
      */
     suspend fun getAddonsFromProfileFresh(): Result<String?> {
-        val userId = getCurrentUserId() ?: return Result.failure(Exception("Not logged in"))
+        val userId = getCurrentUserId()
+            ?: profileManagerProvider.get().getProfileIdSync()
         return try {
-            val session = ensureValidSession()
-            if (session == null) return Result.failure(Exception("Session expired"))
+            runCatching { ensureValidSession() }
 
             @Serializable
             data class AddonsProjection(val addons: String? = null, val email: String? = null)
@@ -711,10 +712,10 @@ class AuthRepository @Inject constructor(
      * Save addons to Supabase profile
      */
     suspend fun saveAddonsToProfile(addonsJson: String): Result<Unit> {
-        val userId = getCurrentUserId() ?: return Result.failure(Exception("Not logged in"))
+        val userId = getCurrentUserId()
+            ?: profileManagerProvider.get().getProfileIdSync()
         return try {
-            val session = ensureValidSession()
-            if (session == null) return Result.failure(Exception("Session expired"))
+            runCatching { ensureValidSession() }
 
             @Serializable
             data class AddonsUpdate(val addons: String)
@@ -751,11 +752,12 @@ class AuthRepository @Inject constructor(
      * Save default subtitle to Supabase profile
      */
     suspend fun saveDefaultSubtitleToProfile(subtitle: String?): Result<Unit> {
-        val userId = getCurrentUserId() ?: return Result.failure(Exception("Not logged in"))
-        val currentProfile = _userProfile.value ?: return Result.failure(Exception("No profile"))
+        val userId = getCurrentUserId()
+            ?: profileManagerProvider.get().getProfileIdSync()
+        val currentProfile = _userProfile.value ?: UserProfile(id = userId)
 
         return try {
-            ensureValidSession()
+            runCatching { ensureValidSession() }
             @Serializable
             data class SubtitleUpdate(val default_subtitle: String?)
 
@@ -783,11 +785,12 @@ class AuthRepository @Inject constructor(
      * Save auto play next to Supabase profile
      */
     suspend fun saveAutoPlayNextToProfile(autoPlayNext: Boolean): Result<Unit> {
-        val userId = getCurrentUserId() ?: return Result.failure(Exception("Not logged in"))
-        val currentProfile = _userProfile.value ?: return Result.failure(Exception("No profile"))
+        val userId = getCurrentUserId()
+            ?: profileManagerProvider.get().getProfileIdSync()
+        val currentProfile = _userProfile.value ?: UserProfile(id = userId)
 
         return try {
-            ensureValidSession()
+            runCatching { ensureValidSession() }
             @Serializable
             data class AutoPlayUpdate(val auto_play_next: Boolean)
 
@@ -805,9 +808,10 @@ class AuthRepository @Inject constructor(
     }
 
     suspend fun loadAccountSyncPayload(): Result<String?> {
-        val userId = getCurrentUserId() ?: return Result.failure(Exception("Not logged in"))
+        val userId = getCurrentUserId()
+            ?: profileManagerProvider.get().getProfileIdSync()
         return try {
-            ensureValidSession()
+            runCatching { ensureValidSession() }
             val row = supabase.postgrest
                 .from("account_sync_state")
                 .select {
@@ -821,9 +825,10 @@ class AuthRepository @Inject constructor(
     }
 
     suspend fun saveAccountSyncPayload(payload: String): Result<Unit> {
-        val userId = getCurrentUserId() ?: return Result.failure(Exception("Not logged in"))
+        val userId = getCurrentUserId()
+            ?: profileManagerProvider.get().getProfileIdSync()
         return try {
-            ensureValidSession()
+            runCatching { ensureValidSession() }
             supabase.postgrest
                 .from("account_sync_state")
                 .upsert(

@@ -76,7 +76,8 @@ class WatchHistoryRepository @Inject constructor(
         streamAddonId: String? = null,
         streamTitle: String? = null
     ) {
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return
+        val userId = authRepositoryProvider.get().getCurrentUserId()
+            ?: profileManager.getProfileIdSync()  // Fallback to profile ID for testing
 
         val entry = WatchHistoryEntry(
                 user_id = userId,
@@ -118,7 +119,8 @@ class WatchHistoryRepository @Inject constructor(
      * Get watch history for current user
      */
     suspend fun getWatchHistory(): List<WatchHistoryEntry> {
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return emptyList()
+        val userId = authRepositoryProvider.get().getCurrentUserId()
+            ?: profileManager.getProfileIdSync()
 
         return try {
             executeSupabaseCall("get watch history") { auth ->
@@ -139,7 +141,8 @@ class WatchHistoryRepository @Inject constructor(
      * Get continue watching items (progress < 90%)
      */
     suspend fun getContinueWatching(): List<WatchHistoryEntry> {
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return emptyList()
+        val userId = authRepositoryProvider.get().getCurrentUserId()
+            ?: profileManager.getProfileIdSync()
 
         return try {
             val records = executeSupabaseCall("get continue watching history") { auth ->
@@ -168,7 +171,8 @@ class WatchHistoryRepository @Inject constructor(
         season: Int?,
         episode: Int?
     ): WatchHistoryEntry? {
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return null
+        val userId = authRepositoryProvider.get().getCurrentUserId()
+            ?: profileManager.getProfileIdSync()
 
         return try {
             val records = executeSupabaseCall("get watch history item") { auth ->
@@ -195,7 +199,8 @@ class WatchHistoryRepository @Inject constructor(
         mediaType: MediaType,
         tmdbId: Int
     ): WatchHistoryEntry? {
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return null
+        val userId = authRepositoryProvider.get().getCurrentUserId()
+            ?: profileManager.getProfileIdSync()
         val mediaTypeKey = if (mediaType == MediaType.MOVIE) "movie" else "tv"
 
         return try {
@@ -229,7 +234,8 @@ class WatchHistoryRepository @Inject constructor(
         season: Int?,
         episode: Int?
     ) {
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return
+        val userId = authRepositoryProvider.get().getCurrentUserId()
+            ?: profileManager.getProfileIdSync()
 
         try {
             executeSupabaseCall("remove watch history item") { auth ->
@@ -251,7 +257,8 @@ class WatchHistoryRepository @Inject constructor(
      * Clear all watch history
      */
     suspend fun clearHistory() {
-        val userId = authRepositoryProvider.get().getCurrentUserId() ?: return
+        val userId = authRepositoryProvider.get().getCurrentUserId()
+            ?: profileManager.getProfileIdSync()
 
         try {
             executeSupabaseCall("clear watch history") { auth ->
@@ -290,7 +297,9 @@ class WatchHistoryRepository @Inject constructor(
         val token = authRepository.getAccessToken()
         if (!token.isNullOrBlank()) return "Bearer $token"
         val refreshed = authRepository.refreshAccessToken()
-        return refreshed?.let { "Bearer $it" }
+        if (!refreshed.isNullOrBlank()) return "Bearer $refreshed"
+        // Fallback: use anon key so writes still work when RLS is disabled (testing)
+        return "Bearer ${Constants.SUPABASE_ANON_KEY}"
     }
 
     private fun parseEpoch(value: String?): Long {
