@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"ContinueWatchingItem\" /Users/ryanwallace/Documents/ARVIO-main/app/src/main/kotlin/com/arflix/tv/data/repository/*.kt)",
+      "Bash(xargs ls -la)",
+      "Bash(grep -n \"account_sync\\\\|saveAccountSyncPayload\\\\|loadAccountSyncPayload\" /Users/ryanwallace/Documents/ARVIO-main/app/src/main/kotlin/com/arflix/tv/data/repository/*.kt)",
+      "Bash(ls -la /Users/ryanwallace/Documents/ARVIO-main/secrets* /Users/ryanwallace/Documents/ARVIO-main/.secrets*)",
+      "Bash(chmod +x /Users/ryanwallace/Documents/ARVIO-main/gradlew)",
+      "Bash(xxd /Users/ryanwallace/Documents/ARVIO-main/gradlew)",
+      "Bash(bash /Users/ryanwallace/Documents/ARVIO-main/gradlew --version)",
+      "Bash(python3 -c \":*)",
+      "Bash(curl -fsSL \"https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradlew\" -o /Users/ryanwallace/Documents/ARVIO-main/gradlew)",
+      "Bash(brew install openjdk@17)",
+      "Bash(brew list openjdk@17)",
+      "Bash(brew reinstall openjdk@17)",
+      "Bash(find /opt/homebrew/Cellar/openjdk* -name \"java\" -type f)",
+      "Bash(brew install --cask temurin@17)",
+      "Bash(export JAVA_HOME=/Users/ryanwallace/Documents/ARVIO-main/.jdk/Contents/Home)",
+      "Bash(/Users/ryanwallace/Documents/ARVIO-main/gradlew -p /Users/ryanwallace/Documents/ARVIO-main assembleDebug)",
+      "Bash(yes)",
+      "Bash(/Users/ryanwallace/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=/Users/ryanwallace/Library/Android/sdk \"platforms;android-34\" \"build-tools;34.0.0\" \"platform-tools\")",
+      "Bash(export ANDROID_HOME=/Users/ryanwallace/Library/Android/sdk)",
+      "Bash(/Users/ryanwallace/Documents/ARVIO-main/gradlew -p /Users/ryanwallace/Documents/ARVIO-main clean assembleDebug)",
+      "Bash(gh auth status)",
+      "Bash(gh repo create streambox-tv --private --description \"StreamBox - Android TV streaming app\")",
+      "Bash(git init)",
+      "Bash(git remote remove origin)",
+      "Bash(git remote add origin https://github.com/RJAWallace/streambox-tv.git)",
+      "Bash(git add -A)",
+      "Bash(git commit -m \"StreamBox v1.0 - Supabase-first Continue Watching with cross-device sync\" --no-verify)",
+      "Bash(git branch -M main)",
+      "Bash(git push -u origin main)",
+      "Bash(git rm -r --cached .jdk)",
+      "Bash(git commit --amend -m \"StreamBox v1.0 - Supabase-first Continue Watching with cross-device sync\" --no-verify)"
+    ]
+  }
+}

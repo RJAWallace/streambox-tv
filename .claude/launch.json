@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "supabase",
+      "runtimeExecutable": "supabase",
+      "runtimeArgs": ["start"],
+      "port": 54321
+    },
+    {
+      "name": "android-debug",
+      "runtimeExecutable": "./gradlew",
+      "runtimeArgs": ["assembleDebug"],
+      "port": 5554
+    }
+  ]
+}
