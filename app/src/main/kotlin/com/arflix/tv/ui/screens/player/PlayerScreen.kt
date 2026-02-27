@@ -67,6 +67,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -1226,11 +1227,11 @@ fun PlayerScreen(
             .background(Color.Black)
             .focusRequester(containerFocusRequester)
             .focusable()
-            .onKeyEvent { event ->
+            .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
-                    // Handle error modal
+                    // Handle error modal — must intercept before children consume D-pad
                     if (uiState.error != null) {
-                        return@onKeyEvent when (event.key) {
+                        return@onPreviewKeyEvent when (event.key) {
                             Key.DirectionLeft -> {
                                 if (errorModalFocusIndex > 0) errorModalFocusIndex--
                                 true
@@ -1247,7 +1248,7 @@ fun PlayerScreen(
                                 onBack()
                                 true
                             }
-                            else -> false
+                            else -> true // Consume all keys when error is showing
                         }
                     }
 
@@ -1259,7 +1260,7 @@ fun PlayerScreen(
                             audioTracks.size.coerceAtLeast(1)
                         }
 
-                        return@onKeyEvent when (event.key) {
+                        return@onPreviewKeyEvent when (event.key) {
                         Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
                             if (event.key == Key.MediaPause) {
                                 exoPlayer.pause()

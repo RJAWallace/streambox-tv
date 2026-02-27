@@ -382,8 +382,8 @@ fun HomeScreen(
         val backdropAlpha = remember { Animatable(1f) }
         LaunchedEffect(currentBackdrop) {
             if (currentBackdrop != null) {
-                backdropAlpha.snapTo(0.7f)
-                backdropAlpha.animateTo(1f, animationSpec = tween(300))
+                backdropAlpha.snapTo(0.8f)
+                backdropAlpha.animateTo(1f, animationSpec = tween(150))
             }
         }
         Box(
@@ -1387,8 +1387,8 @@ private fun ContentRow(
         }
         if (pageIndex != lastPageIndex) {
             lastPageIndex = pageIndex
-            rowFade.snapTo(0.8f)
-            rowFade.animateTo(1f, animationSpec = tween(durationMillis = 300))
+            rowFade.snapTo(0.85f)
+            rowFade.animateTo(1f, animationSpec = tween(durationMillis = 150))
         }
     }
 

@@ -299,12 +299,21 @@ class DetailsViewModel @Inject constructor(
                 // Get show status
                 val showStatus = if (mediaType == MediaType.TV) mergedItem.status else null
 
-                // Show content immediately — don't block on Trakt cache
+                // Await episodes so seasons bar + episodes appear together
+                val initialEpisodes = runCatching { episodesDeferred?.await() }.getOrNull()
+                val enrichedEpisodes = if (!initialEpisodes.isNullOrEmpty()) {
+                    val enriched = enrichEpisodesWithProgress(initialEpisodes, mediaId, seasonToLoad)
+                    seasonCache[seasonToLoad] = enriched
+                    enriched
+                } else emptyList()
+
+                // Show content with episodes included — no flash of empty state
                 val baseState = _uiState.value.copy(
                     isLoading = false,
                     item = mergedItem,
                     totalSeasons = totalSeasons,
                     currentSeason = seasonToLoad,
+                    episodes = enrichedEpisodes,
                     genres = genreNames,
                     language = languageName,
                     budget = budgetDisplay,
@@ -401,19 +410,14 @@ class DetailsViewModel @Inject constructor(
                     }
                 }
 
+                // Episodes already loaded above with baseState — just set initial index + prefetch
                 launch {
-                    val episodes = runCatching { episodesDeferred?.await() }.getOrNull()
-                    if (!episodes.isNullOrEmpty()) {
-                        val enriched = enrichEpisodesWithProgress(episodes, mediaId, seasonToLoad)
-                        seasonCache[seasonToLoad] = enriched
+                    if (enrichedEpisodes.isNotEmpty()) {
                         val initialEpisodeIndex = if (initialEpisode != null) {
-                            enriched.indexOfFirst { it.episodeNumber == initialEpisode }.coerceAtLeast(0)
+                            enrichedEpisodes.indexOfFirst { it.episodeNumber == initialEpisode }.coerceAtLeast(0)
                         } else 0
                         updateState { state ->
-                            state.copy(
-                                episodes = enriched,
-                                initialEpisodeIndex = initialEpisodeIndex
-                            )
+                            state.copy(initialEpisodeIndex = initialEpisodeIndex)
                         }
                         prefetchAdjacentSeasons(seasonToLoad, totalSeasons)
                     }
