@@ -322,18 +322,19 @@ fun DetailsScreen(
                                 sidebarFocusIndex = (sidebarFocusIndex - 1).coerceIn(0, maxSidebarIndex)
                                 true
                             } else {
-                                // Navigation: BUTTONS -> EPISODES -> SEASONS -> CAST -> REVIEWS -> SIMILAR
+                                // Navigation: BUTTONS -> SEASONS -> EPISODES -> CAST -> REVIEWS -> SIMILAR
                                 val isTV = mediaType == MediaType.TV
                                 val hasCast = uiState.cast.isNotEmpty()
                                 val hasReviews = uiState.reviews.isNotEmpty()
                                 focusedSection = when (focusedSection) {
                                     FocusSection.BUTTONS -> FocusSection.BUTTONS  // Stay on buttons (top)
-                                    FocusSection.EPISODES -> FocusSection.BUTTONS  // Go up to buttons
-                                    FocusSection.SEASONS -> FocusSection.EPISODES  // Go up to episodes
+                                    FocusSection.SEASONS -> FocusSection.BUTTONS  // Go up to buttons
+                                    FocusSection.EPISODES -> {
+                                        if (isTV && uiState.totalSeasons > 1) FocusSection.SEASONS else FocusSection.BUTTONS
+                                    }
                                     FocusSection.CAST -> {
-                                        if (isTV) {
-                                            if (uiState.totalSeasons > 1) FocusSection.SEASONS else FocusSection.EPISODES
-                                        } else FocusSection.BUTTONS
+                                        if (isTV) FocusSection.EPISODES
+                                        else FocusSection.BUTTONS
                                     }
                                     FocusSection.REVIEWS -> if (hasCast) FocusSection.CAST else FocusSection.BUTTONS
                                     FocusSection.SIMILAR -> if (hasReviews) FocusSection.REVIEWS else if (hasCast) FocusSection.CAST else FocusSection.BUTTONS
@@ -346,7 +347,7 @@ fun DetailsScreen(
                                 sidebarFocusIndex = (sidebarFocusIndex + 1).coerceIn(0, maxSidebarIndex)
                                 true
                             } else {
-                                // Navigation: BUTTONS -> EPISODES -> SEASONS -> CAST -> REVIEWS -> SIMILAR
+                                // Navigation: BUTTONS -> SEASONS -> EPISODES -> CAST -> REVIEWS -> SIMILAR
                                 val isTV = mediaType == MediaType.TV
                                 val hasEpisodes = uiState.episodes.isNotEmpty()
                                 val hasCast = uiState.cast.isNotEmpty()
@@ -354,24 +355,25 @@ fun DetailsScreen(
                                 val hasSimilar = uiState.similar.isNotEmpty()
                                 focusedSection = when (focusedSection) {
                                     FocusSection.BUTTONS -> {
-                                        if (isTV && hasEpisodes) FocusSection.EPISODES
+                                        if (isTV && hasEpisodes && uiState.totalSeasons > 1) FocusSection.SEASONS
+                                        else if (isTV && hasEpisodes) FocusSection.EPISODES
                                         else if (hasCast) FocusSection.CAST
                                         else if (hasReviews) FocusSection.REVIEWS
                                         else if (hasSimilar) FocusSection.SIMILAR
                                         else FocusSection.BUTTONS
                                     }
-                                    FocusSection.EPISODES -> {
-                                        if (uiState.totalSeasons > 1) FocusSection.SEASONS
+                                    FocusSection.SEASONS -> {
+                                        if (hasEpisodes) FocusSection.EPISODES
                                         else if (hasCast) FocusSection.CAST
                                         else if (hasReviews) FocusSection.REVIEWS
                                         else if (hasSimilar) FocusSection.SIMILAR
-                                        else FocusSection.EPISODES
+                                        else FocusSection.SEASONS
                                     }
-                                    FocusSection.SEASONS -> {
+                                    FocusSection.EPISODES -> {
                                         if (hasCast) FocusSection.CAST
                                         else if (hasReviews) FocusSection.REVIEWS
                                         else if (hasSimilar) FocusSection.SIMILAR
-                                        else FocusSection.SEASONS
+                                        else FocusSection.EPISODES
                                     }
                                     FocusSection.CAST -> {
                                         if (hasReviews) FocusSection.REVIEWS

@@ -1092,11 +1092,16 @@ class SettingsViewModel @Inject constructor(
             )
             val result = authRepository.loginWithCode(trimmed)
             if (result.isSuccess) {
-                streamRepository.syncAddonsFromCloud()
+                // Flag so observeAuthState triggers profile switch after cloud restore
+                pendingProfileSwitchAfterCloudLogin = true
                 _uiState.value = _uiState.value.copy(
                     codeValidationState = CodeValidationState.VALID,
-                    isCloudAuthWorking = false
+                    isCloudAuthWorking = false,
+                    toastMessage = "Connected! Syncing profiles...",
+                    toastType = ToastType.SUCCESS
                 )
+                // observeAuthState will trigger restoreCloudStateToLocalInternal
+                // which restores profiles, addons, catalogs, settings from cloud
             } else {
                 _uiState.value = _uiState.value.copy(
                     codeValidationState = CodeValidationState.INVALID,

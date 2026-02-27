@@ -11,6 +11,7 @@ import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.repository.MediaRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,7 +22,7 @@ import javax.inject.Inject
 
 /**
  * StartupViewModel - Handles parallel loading during splash screen
- * Pre-loads all data needed for instant home screen display
+ * Pre-loads home categories + hero assets while user is on profile selection
  */
 data class StartupState(
     val isLoading: Boolean = true,
@@ -46,8 +47,6 @@ class StartupViewModel @Inject constructor(
     private val networkDispatcher = Dispatchers.IO.limitedParallelism(8)
     private val heroLogoPreloadWidth = 300
     private val heroLogoPreloadHeight = 70
-    // PERFORMANCE: Use smaller backdrop for preload - will upscale but loads faster
-    // Full resolution is loaded lazily when actually displayed
     private val heroBackdropPreloadWidth = 1280
     private val heroBackdropPreloadHeight = 720
 
@@ -59,22 +58,61 @@ class StartupViewModel @Inject constructor(
     }
 
     private fun startParallelLoading() {
-        viewModelScope.launch {
+        viewModelScope.launch(networkDispatcher) {
             try {
-                // App always opens on profile selection first, so defer heavy
-                // home network preloading to HomeViewModel after profile is chosen.
-                updateProgress(0.7f, "Preparing...")
+                updateProgress(0.3f, "Loading catalogs...")
 
-                _state.value = _state.value.copy(
-                    isLoading = false,
-                    isReady = true,
-                    categories = emptyList(),
-                    heroItem = null,
-                    isAuthenticated = false
-                )
+                // Fetch home categories while user is on profile selection screen
+                val categories = try {
+                    mediaRepository.getHomeCategories()
+                } catch (e: Exception) {
+                    emptyList()
+                }
 
-                updateProgress(1.0f, "Ready!")
+                if (categories.isNotEmpty()) {
+                    val heroItem = categories.firstOrNull()?.items?.firstOrNull()
 
+                    updateProgress(0.6f, "Loading content...")
+
+                    _state.value = _state.value.copy(
+                        categories = categories,
+                        heroItem = heroItem
+                    )
+
+                    // Prefetch hero assets in parallel
+                    if (heroItem != null) {
+                        prefetchHeroAssets(heroItem)
+                    }
+
+                    // Prefetch logos for first 2 rows
+                    val logoCache = mutableMapOf<String, String>()
+                    val logoJobs = categories.take(2).flatMap { it.items.take(5) }.map { item ->
+                        async(networkDispatcher) {
+                            try {
+                                val key = "${item.mediaType}_${item.id}"
+                                val logo = mediaRepository.getLogoUrl(item.mediaType, item.id)
+                                if (!logo.isNullOrBlank()) key to logo else null
+                            } catch (e: Exception) { null }
+                        }
+                    }
+                    logoJobs.forEach { job ->
+                        val result = try { job.await() } catch (e: Exception) { null }
+                        if (result != null) logoCache[result.first] = result.second
+                    }
+
+                    _state.value = _state.value.copy(
+                        logoCache = logoCache,
+                        isLoading = false,
+                        isReady = true
+                    )
+                    updateProgress(1.0f, "Ready!")
+                } else {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        isReady = true
+                    )
+                    updateProgress(1.0f, "Ready!")
+                }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     isLoading = false,
@@ -131,4 +169,3 @@ class StartupViewModel @Inject constructor(
         }
     }
 }
-

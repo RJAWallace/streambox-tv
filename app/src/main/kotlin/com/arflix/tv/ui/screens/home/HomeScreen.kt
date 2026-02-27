@@ -859,10 +859,6 @@ private fun HomeInputLayer(
         }
     }
 
-    val maxItemsInCurrentRow by remember {
-        derivedStateOf { categories.getOrNull(focusState.currentRowIndex)?.items?.size ?: 0 }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -901,7 +897,8 @@ private fun HomeInputLayer(
                                 focusState.isSidebarFocused = false
                                 true
                             } else {
-                                if (focusState.currentItemIndex < maxItemsInCurrentRow - 1) {
+                                val maxItems = categories.getOrNull(focusState.currentRowIndex)?.items?.size ?: 0
+                                if (focusState.currentItemIndex < maxItems - 1) {
                                     focusState.currentItemIndex++
                                     focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                                 }
