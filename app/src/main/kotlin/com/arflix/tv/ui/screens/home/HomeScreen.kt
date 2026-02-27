@@ -331,7 +331,7 @@ fun HomeScreen(
                 val now = SystemClock.elapsedRealtime()
                 val isFastScrolling = now - focusState.lastNavEventTime < fastScrollThresholdMs
                 viewModel.onFocusChanged(rowIndex, itemIndex, shouldPrefetch = true)
-                delay(if (isFastScrolling) 700L else 220L)
+                delay(if (isFastScrolling) 400L else 150L)
 
                 val idleFor = SystemClock.elapsedRealtime() - focusState.lastNavEventTime
                 if (idleFor < fastScrollThresholdMs) return@collectLatest

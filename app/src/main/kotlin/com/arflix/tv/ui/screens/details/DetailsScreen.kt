@@ -9,6 +9,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -63,6 +64,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
@@ -1136,43 +1139,8 @@ private fun DetailsContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(top = 12.dp)
         ) {
-            // Episodes row (for TV shows)
+            // Season buttons row (above episodes)
             if (item.mediaType == MediaType.TV && episodes.isNotEmpty()) {
-                item {
-                    val episodeRowState = rememberTvLazyListState()
-                    HomeStyleRowAutoScroll(
-                        rowState = episodeRowState,
-                        isCurrentRow = focusedSection == FocusSection.EPISODES,
-                        focusedItemIndex = episodeIndex,
-                        totalItems = episodes.size,
-                        itemWidth = 210.dp,
-                        itemSpacing = 14.dp
-                    )
-
-                    // Use rememberUpdatedState to ensure items recompose when focus changes
-                    val currentFocusedSection by rememberUpdatedState(focusedSection)
-                    val currentEpisodeIndex by rememberUpdatedState(episodeIndex)
-
-                    TvLazyRow(
-                        state = episodeRowState,
-                        contentPadding = PaddingValues(start = contentStartPadding, end = 400.dp),  // Extra padding to ensure last items visible
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        itemsIndexed(
-                            episodes,
-                            key = { index, ep -> "${ep.seasonNumber}_${ep.episodeNumber}_$index" }
-                        ) { index, episode ->
-                            // Read state inside item to ensure recomposition on focus change
-                            val isFocused = currentFocusedSection == FocusSection.EPISODES && index == currentEpisodeIndex
-                            EpisodeCard(
-                                episode = episode,
-                                isFocused = isFocused
-                            )
-                        }
-                    }
-                }
-
-                // Season buttons row
                 if (totalSeasons > 1) {
                     item {
                         val seasonRowState = rememberTvLazyListState()
@@ -1207,6 +1175,41 @@ private fun DetailsContent(
                                     totalCount = progress?.second ?: 0
                                 )
                             }
+                        }
+                    }
+                }
+
+                // Episodes row
+                item {
+                    val episodeRowState = rememberTvLazyListState()
+                    HomeStyleRowAutoScroll(
+                        rowState = episodeRowState,
+                        isCurrentRow = focusedSection == FocusSection.EPISODES,
+                        focusedItemIndex = episodeIndex,
+                        totalItems = episodes.size,
+                        itemWidth = 210.dp,
+                        itemSpacing = 14.dp
+                    )
+
+                    // Use rememberUpdatedState to ensure items recompose when focus changes
+                    val currentFocusedSection by rememberUpdatedState(focusedSection)
+                    val currentEpisodeIndex by rememberUpdatedState(episodeIndex)
+
+                    TvLazyRow(
+                        state = episodeRowState,
+                        contentPadding = PaddingValues(start = contentStartPadding, end = 400.dp),  // Extra padding to ensure last items visible
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        itemsIndexed(
+                            episodes,
+                            key = { index, ep -> "${ep.seasonNumber}_${ep.episodeNumber}_$index" }
+                        ) { index, episode ->
+                            // Read state inside item to ensure recomposition on focus change
+                            val isFocused = currentFocusedSection == FocusSection.EPISODES && index == currentEpisodeIndex
+                            EpisodeCard(
+                                episode = episode,
+                                isFocused = isFocused
+                            )
                         }
                     }
                 }
@@ -1681,7 +1684,7 @@ private fun EpisodeCard(
                         )
                 )
 
-                // Subtle green watched badge
+                // Watched badge or partial progress indicator
                 if (episode.isWatched) {
                     Box(
                         modifier = Modifier
@@ -1706,6 +1709,14 @@ private fun EpisodeCard(
                             modifier = Modifier.size(8.dp)
                         )
                     }
+                } else if (episode.watchProgress > 0.01f) {
+                    WatchProgressIndicator(
+                        progress = episode.watchProgress,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(bottom = 6.dp, end = 6.dp)
+                            .size(14.dp)
+                    )
                 }
 
             }
@@ -1728,6 +1739,31 @@ private fun EpisodeCard(
             color = ArvioSkin.colors.textMuted.copy(alpha = 0.85f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun WatchProgressIndicator(progress: Float, modifier: Modifier = Modifier) {
+    val trackColor = Color.White.copy(alpha = 0.3f)
+    val fillColor = Color.White.copy(alpha = 0.85f)
+    Canvas(modifier = modifier) {
+        val strokeWidth = 2.dp.toPx()
+        // Track circle
+        drawArc(
+            color = trackColor,
+            startAngle = 0f,
+            sweepAngle = 360f,
+            useCenter = false,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+        )
+        // Progress arc from top (-90°) clockwise
+        drawArc(
+            color = fillColor,
+            startAngle = -90f,
+            sweepAngle = progress * 360f,
+            useCenter = false,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
         )
     }
 }

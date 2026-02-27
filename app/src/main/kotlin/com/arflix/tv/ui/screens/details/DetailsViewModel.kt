@@ -160,6 +160,7 @@ class DetailsViewModel @Inject constructor(
     private var vodAppendJob: kotlinx.coroutines.Job? = null
     private var loadStreamsJob: kotlinx.coroutines.Job? = null
     private var loadStreamsRequestId: Long = 0L
+    private val seasonCache = mutableMapOf<Int, List<Episode>>()
     private fun autoPlaySingleSourceKey() = profileManager.profileBooleanKey("auto_play_single_source")
     private fun autoPlayMinQualityKey() = profileManager.profileStringKey("auto_play_min_quality")
 
@@ -205,6 +206,7 @@ class DetailsViewModel @Inject constructor(
     fun loadDetails(mediaType: MediaType, mediaId: Int, initialSeason: Int? = null, initialEpisode: Int? = null) {
         currentMediaType = mediaType
         currentMediaId = mediaId
+        seasonCache.clear()
         vodAppendJob?.cancel()
 
         viewModelScope.launch {
@@ -402,15 +404,18 @@ class DetailsViewModel @Inject constructor(
                 launch {
                     val episodes = runCatching { episodesDeferred?.await() }.getOrNull()
                     if (!episodes.isNullOrEmpty()) {
+                        val enriched = enrichEpisodesWithProgress(episodes, mediaId, seasonToLoad)
+                        seasonCache[seasonToLoad] = enriched
                         val initialEpisodeIndex = if (initialEpisode != null) {
-                            episodes.indexOfFirst { it.episodeNumber == initialEpisode }.coerceAtLeast(0)
+                            enriched.indexOfFirst { it.episodeNumber == initialEpisode }.coerceAtLeast(0)
                         } else 0
                         updateState { state ->
                             state.copy(
-                                episodes = episodes,
+                                episodes = enriched,
                                 initialEpisodeIndex = initialEpisodeIndex
                             )
                         }
+                        prefetchAdjacentSeasons(seasonToLoad, totalSeasons)
                     }
                 }
 
@@ -513,6 +518,14 @@ class DetailsViewModel @Inject constructor(
         // Don't reload if already on this season
         if (_uiState.value.currentSeason == seasonNumber && _uiState.value.episodes.isNotEmpty()) return
 
+        // Check season cache first
+        val cached = seasonCache[seasonNumber]
+        if (cached != null) {
+            _uiState.value = _uiState.value.copy(episodes = cached, currentSeason = seasonNumber)
+            prefetchAdjacentSeasons(seasonNumber, _uiState.value.totalSeasons)
+            return
+        }
+
         viewModelScope.launch {
             // Keep current episodes visible while loading new ones
             val currentEpisodes = _uiState.value.episodes
@@ -520,10 +533,13 @@ class DetailsViewModel @Inject constructor(
             try {
                 val episodes = mediaRepository.getSeasonEpisodes(currentMediaId, seasonNumber)
                 if (episodes.isNotEmpty()) {
+                    val enriched = enrichEpisodesWithProgress(episodes, currentMediaId, seasonNumber)
+                    seasonCache[seasonNumber] = enriched
                     _uiState.value = _uiState.value.copy(
-                        episodes = episodes,
+                        episodes = enriched,
                         currentSeason = seasonNumber
                     )
+                    prefetchAdjacentSeasons(seasonNumber, _uiState.value.totalSeasons)
                 } else {
                     // If no episodes returned, keep current and show error
                     _uiState.value = _uiState.value.copy(
@@ -538,6 +554,42 @@ class DetailsViewModel @Inject constructor(
                     toastType = ToastType.ERROR
                 )
             }
+        }
+    }
+
+    private suspend fun enrichEpisodesWithProgress(
+        episodes: List<Episode>,
+        mediaId: Int,
+        seasonNumber: Int
+    ): List<Episode> {
+        val progressMap = try {
+            watchHistoryRepository.getEpisodeProgressMap(mediaId, seasonNumber)
+        } catch (_: Exception) {
+            emptyMap()
+        }
+        if (progressMap.isEmpty()) return episodes
+        return episodes.map { ep ->
+            val progress = progressMap["${ep.seasonNumber}_${ep.episodeNumber}"] ?: 0f
+            ep.copy(
+                watchProgress = progress,
+                isWatched = ep.isWatched || progress >= 0.95f
+            )
+        }
+    }
+
+    private fun prefetchAdjacentSeasons(currentSeason: Int, totalSeasons: Int) {
+        viewModelScope.launch {
+            listOf(currentSeason - 1, currentSeason + 1)
+                .filter { it in 1..totalSeasons && !seasonCache.containsKey(it) }
+                .forEach { season ->
+                    try {
+                        val episodes = mediaRepository.getSeasonEpisodes(currentMediaId, season)
+                        if (episodes.isNotEmpty()) {
+                            val enriched = enrichEpisodesWithProgress(episodes, currentMediaId, season)
+                            seasonCache[season] = enriched
+                        }
+                    } catch (_: Exception) {}
+                }
         }
     }
 

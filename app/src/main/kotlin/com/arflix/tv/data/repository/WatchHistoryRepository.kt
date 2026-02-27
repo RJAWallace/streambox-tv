@@ -197,6 +197,38 @@ class WatchHistoryRepository @Inject constructor(
     }
 
     /**
+     * Get episode progress map for a show+season.
+     * Returns Map of "season_episode" -> progress fraction (0.0-1.0).
+     */
+    suspend fun getEpisodeProgressMap(
+        tmdbId: Int,
+        seasonNumber: Int
+    ): Map<String, Float> {
+        val userId = authRepositoryProvider.get().getCurrentUserId()
+            ?: profileManager.getProfileIdSync()
+
+        return try {
+            val records = executeSupabaseCall("get episode progress map") { auth ->
+                supabaseApi.getWatchHistoryItem(
+                    auth = auth,
+                    userId = "eq.$userId",
+                    showTmdbId = "eq.$tmdbId",
+                    mediaType = "eq.tv",
+                    source = profileHistorySourceFilter(),
+                    season = "eq.$seasonNumber"
+                )
+            }
+            records.map { it.toEntry() }
+                .filter { it.episode != null }
+                .associate { entry ->
+                    "${entry.season}_${entry.episode}" to entry.progress.coerceIn(0f, 1f)
+                }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    /**
      * Get the latest in-progress entry for a show/movie.
      */
     suspend fun getLatestProgress(

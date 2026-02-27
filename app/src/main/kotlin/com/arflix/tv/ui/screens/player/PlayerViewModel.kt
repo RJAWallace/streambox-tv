@@ -1375,7 +1375,6 @@ class PlayerViewModel @Inject constructor(
 
             // Save to Supabase watch history (debounced + on pause/stop)
             if (!isPlaying || currentTime - lastWatchHistorySaveTime >= WATCH_HISTORY_UPDATE_INTERVAL_MS || progressPercent >= Constants.WATCHED_THRESHOLD) {
-                lastWatchHistorySaveTime = currentTime
                 val durationSeconds = (duration / 1000L).coerceAtLeast(1L)
                 val positionSeconds = (position / 1000L).coerceAtLeast(0L)
                 val selectedStream = _uiState.value.selectedStream
@@ -1417,6 +1416,7 @@ class PlayerViewModel @Inject constructor(
                     streamAddonId = streamAddonId,
                     streamTitle = streamTitle
                 )
+                lastWatchHistorySaveTime = currentTime
             }
 
             // Mark as watched when playback ends or crosses threshold

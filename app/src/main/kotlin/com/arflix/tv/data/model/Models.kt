@@ -75,7 +75,8 @@ data class Episode(
     val voteAverage: Float = 0f,
     val runtime: Int = 0,
     val airDate: String = "",
-    val isWatched: Boolean = false
+    val isWatched: Boolean = false,
+    val watchProgress: Float = 0f
 ) : Serializable
 
 /**
