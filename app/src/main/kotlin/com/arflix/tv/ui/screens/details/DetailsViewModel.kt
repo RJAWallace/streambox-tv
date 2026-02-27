@@ -299,7 +299,7 @@ class DetailsViewModel @Inject constructor(
                 // Get show status
                 val showStatus = if (mediaType == MediaType.TV) mergedItem.status else null
 
-                // Await episodes so seasons bar + episodes appear together
+                // Await episodes AND season progress so everything appears together
                 val initialEpisodes = runCatching { episodesDeferred?.await() }.getOrNull()
                 val enrichedEpisodes = if (!initialEpisodes.isNullOrEmpty()) {
                     val enriched = enrichEpisodesWithProgress(initialEpisodes, mediaId, seasonToLoad)
@@ -307,13 +307,23 @@ class DetailsViewModel @Inject constructor(
                     enriched
                 } else emptyList()
 
-                // Show content with episodes included — no flash of empty state
+                // Await season progress before showing page
+                val seasonProgressResult = runCatching { seasonProgressDeferred?.await() }.getOrNull()
+                val seasonProgress = seasonProgressResult?.progress ?: emptyMap()
+                val resolvedTotalSeasons = if (mediaType == MediaType.TV) {
+                    maxOf(totalSeasons, seasonProgress.keys.maxOrNull() ?: 0, 1)
+                } else {
+                    totalSeasons
+                }
+
+                // Show content with episodes + season progress included — fully loaded
                 val baseState = _uiState.value.copy(
                     isLoading = false,
                     item = mergedItem,
-                    totalSeasons = totalSeasons,
+                    totalSeasons = resolvedTotalSeasons,
                     currentSeason = seasonToLoad,
                     episodes = enrichedEpisodes,
+                    seasonProgress = seasonProgress,
                     genres = genreNames,
                     language = languageName,
                     budget = budgetDisplay,
@@ -428,21 +438,7 @@ class DetailsViewModel @Inject constructor(
                     updateState { state -> state.copy(isInWatchlist = isInWatchlist) }
                 }
 
-                launch {
-                    val seasonProgressResult = runCatching { seasonProgressDeferred?.await() }.getOrNull()
-                    val seasonProgress = seasonProgressResult?.progress ?: emptyMap()
-                    val resolvedTotalSeasons = if (mediaType == MediaType.TV) {
-                        maxOf(baseState.totalSeasons, seasonProgress.keys.maxOrNull() ?: 0, 1)
-                    } else {
-                        baseState.totalSeasons
-                    }
-                    updateState { state ->
-                        state.copy(
-                            seasonProgress = seasonProgress,
-                            totalSeasons = resolvedTotalSeasons
-                        )
-                    }
-                }
+                // seasonProgress already loaded in baseState above
 
                 launch {
                     val resumeInfo = runCatching { resumeDeferred.await() }.getOrNull()

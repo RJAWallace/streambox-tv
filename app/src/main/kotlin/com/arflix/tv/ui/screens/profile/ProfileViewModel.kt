@@ -107,9 +107,12 @@ class ProfileViewModel @Inject constructor(
                 if (cloudHasProfiles) {
                     // Cloud has profiles → pull them down (cross-device sync)
                     pullProfilesFromCloud()
+                    // Also pull watchlist from cloud
+                    watchlistRepository.pullWatchlistFromCloud()
                 } else {
-                    // Cloud is empty → push local profiles up so they're synced
+                    // Cloud is empty → push local data up so they're synced
                     profileRepository.syncProfilesToCloud()
+                    watchlistRepository.pushWatchlistToCloud()
                 }
                 _uiState.value = _uiState.value.copy(
                     codeValidating = false,

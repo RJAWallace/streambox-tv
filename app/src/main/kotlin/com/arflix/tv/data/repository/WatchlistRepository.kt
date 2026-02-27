@@ -2,13 +2,16 @@ package com.arflix.tv.data.repository
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import com.arflix.tv.data.api.SupabaseApi
 import com.arflix.tv.data.api.TmdbApi
+import com.arflix.tv.data.api.WatchlistRecord
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.traktDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -47,7 +50,9 @@ data class LocalWatchlistItem(
 class WatchlistRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val profileManager: ProfileManager,
-    private val tmdbApi: TmdbApi
+    private val tmdbApi: TmdbApi,
+    private val supabaseApi: SupabaseApi,
+    private val authRepositoryProvider: Lazy<AuthRepository>
 ) {
     private val gson = Gson()
 
@@ -140,6 +145,9 @@ class WatchlistRepository @Inject constructor(
             }
             cacheLoaded = true
         }
+
+        // Sync to cloud
+        syncAddToCloud(localItem)
     }
 
     /**
@@ -164,6 +172,9 @@ class WatchlistRepository @Inject constructor(
             itemsCache.removeAll { it.id == tmdbId && it.mediaType == mediaType }
             _watchlistItems.value = itemsCache.toList()
         }
+
+        // Sync removal to cloud
+        syncRemoveFromCloud(tmdbId, typeStr)
     }
 
     /**
@@ -345,5 +356,109 @@ class WatchlistRepository @Inject constructor(
         val hours = runtime / 60
         val mins = runtime % 60
         return if (hours > 0) "${hours}h ${mins}m" else "${mins}m"
+    }
+
+    // ========== Cloud Sync ==========
+
+    private fun getSupabaseAuth(): String {
+        return "Bearer ${Constants.SUPABASE_ANON_KEY}"
+    }
+
+    private fun getCloudUserId(): String? {
+        return authRepositoryProvider.get().getCurrentUserId()
+    }
+
+    private suspend fun syncAddToCloud(item: LocalWatchlistItem) {
+        val userId = getCloudUserId() ?: return // Not logged in, skip cloud sync
+        try {
+            supabaseApi.upsertWatchlist(
+                auth = getSupabaseAuth(),
+                record = WatchlistRecord(
+                    userId = userId,
+                    tmdbId = item.tmdbId,
+                    mediaType = item.mediaType
+                )
+            )
+        } catch (e: Exception) {
+            System.err.println("[WATCHLIST-SYNC] Failed to sync add: ${e.message}")
+        }
+    }
+
+    private suspend fun syncRemoveFromCloud(tmdbId: Int, mediaType: String) {
+        val userId = getCloudUserId() ?: return
+        try {
+            supabaseApi.deleteWatchlist(
+                auth = getSupabaseAuth(),
+                userId = "eq.$userId",
+                tmdbId = "eq.$tmdbId",
+                mediaType = "eq.$mediaType"
+            )
+        } catch (e: Exception) {
+            System.err.println("[WATCHLIST-SYNC] Failed to sync remove: ${e.message}")
+        }
+    }
+
+    /**
+     * Pull watchlist from cloud and merge with local.
+     * Called after login to restore cross-device watchlist.
+     */
+    suspend fun pullWatchlistFromCloud() {
+        val userId = getCloudUserId() ?: return
+        try {
+            val cloudItems = supabaseApi.getWatchlist(
+                auth = getSupabaseAuth(),
+                userId = "eq.$userId"
+            )
+            if (cloudItems.isEmpty()) return
+
+            val localItems = loadWatchlistRaw().toMutableList()
+            val localKeys = localItems.map { "${it.tmdbId}:${it.mediaType}" }.toSet()
+
+            // Add cloud items that don't exist locally
+            var added = 0
+            for (record in cloudItems) {
+                val key = "${record.tmdbId}:${record.mediaType}"
+                if (key !in localKeys) {
+                    localItems.add(LocalWatchlistItem(
+                        tmdbId = record.tmdbId,
+                        mediaType = record.mediaType,
+                        title = "",
+                        addedAt = System.currentTimeMillis()
+                    ))
+                    added++
+                }
+            }
+            if (added > 0) {
+                saveWatchlist(localItems)
+                clearWatchlistCache() // Force reload to enrich from TMDB
+                System.err.println("[WATCHLIST-SYNC] Pulled $added items from cloud")
+            }
+        } catch (e: Exception) {
+            System.err.println("[WATCHLIST-SYNC] Failed to pull from cloud: ${e.message}")
+        }
+    }
+
+    /**
+     * Push all local watchlist items to cloud.
+     * Called after first-time login.
+     */
+    suspend fun pushWatchlistToCloud() {
+        val userId = getCloudUserId() ?: return
+        val items = loadWatchlistRaw()
+        for (item in items) {
+            try {
+                supabaseApi.upsertWatchlist(
+                    auth = getSupabaseAuth(),
+                    record = WatchlistRecord(
+                        userId = userId,
+                        tmdbId = item.tmdbId,
+                        mediaType = item.mediaType
+                    )
+                )
+            } catch (e: Exception) {
+                System.err.println("[WATCHLIST-SYNC] Failed to push item ${item.tmdbId}: ${e.message}")
+            }
+        }
+        System.err.println("[WATCHLIST-SYNC] Pushed ${items.size} items to cloud")
     }
 }

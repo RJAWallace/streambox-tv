@@ -34,7 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
@@ -141,7 +141,7 @@ fun WatchlistScreen(
                 }
             }
             .focusable()
-            .onKeyEvent { event ->
+            .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
                     when (event.key) {
                         Key.Back, Key.Escape -> {
@@ -157,7 +157,7 @@ fun WatchlistScreen(
                                 isSidebarFocused = true
                                 true
                             } else {
-                                false
+                                true // Consume to prevent focus leaving
                             }
                         }
                         Key.DirectionRight -> {
@@ -175,13 +175,13 @@ fun WatchlistScreen(
                             }
                         }
                         Key.DirectionUp -> {
-                            if (isSidebarFocused && sidebarFocusIndex > 0) {
+                            if (isSidebarFocused) {
                                 sidebarFocusIndex = (sidebarFocusIndex - 1).coerceIn(0, maxSidebarIndex)
                                 true
                             } else false
                         }
                         Key.DirectionDown -> {
-                            if (isSidebarFocused && sidebarFocusIndex < maxSidebarIndex) {
+                            if (isSidebarFocused) {
                                 sidebarFocusIndex = (sidebarFocusIndex + 1).coerceIn(0, maxSidebarIndex)
                                 true
                             } else false
@@ -203,8 +203,11 @@ fun WatchlistScreen(
                                 true
                             } else false
                         }
-                        else -> false
+                        else -> if (isSidebarFocused) true else false
                     }
+                } else if (event.type == KeyEventType.KeyUp && isSidebarFocused) {
+                    // Consume KeyUp events when sidebar is focused to prevent grid interaction
+                    true
                 } else false
             }
     ) {

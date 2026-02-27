@@ -107,7 +107,9 @@ interface SupabaseApi {
     suspend fun upsertWatchlist(
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
+        @Header("Content-Type") contentType: String = "application/json",
         @Header("Prefer") prefer: String = "resolution=merge-duplicates",
+        @Query("on_conflict") onConflict: String = "user_id,tmdb_id,media_type",
         @Body record: WatchlistRecord
     )
 
