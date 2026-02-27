@@ -845,7 +845,8 @@ private fun HomeInputLayer(
     val maxSidebarIndex = if (hasProfile) SidebarItem.entries.size else SidebarItem.entries.size - 1  // 5 or 4
 
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        delay(100)
+        try { focusRequester.requestFocus() } catch (_: IllegalStateException) {}
     }
     LaunchedEffect(hasProfile) {
         if (hasProfile) focusState.sidebarFocusIndex = 2

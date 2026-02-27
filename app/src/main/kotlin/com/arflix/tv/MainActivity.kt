@@ -305,12 +305,9 @@ fun ArflixApp(
         }
     }
 
-    // Route to login on first startup if not authenticated
-    val startDestination = when (authState) {
-        is AuthState.Authenticated -> Screen.ProfileSelection.route
-        is AuthState.NotAuthenticated -> Screen.Login.route
-        else -> Screen.ProfileSelection.route
-    }
+    // Always start at profile selection — ProfileSelectionScreen handles
+    // showing the code entry dialog if not authenticated
+    val startDestination = Screen.ProfileSelection.route
 
     Box(
         modifier = Modifier
