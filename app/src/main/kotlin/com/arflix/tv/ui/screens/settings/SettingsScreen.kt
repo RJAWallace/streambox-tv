@@ -248,7 +248,7 @@ fun SettingsScreen(
             .focusable()
             .onPreviewKeyEvent { event ->
                     // BLOCKER FIX: Ignore main screen navigation if modals are open
-                    if (showCustomAddonInput || showSubtitlePicker || showAudioLanguagePicker || showIptvInput || showCatalogInput || uiState.showCloudPairDialog || uiState.showCloudEmailPasswordDialog) return@onPreviewKeyEvent false
+                    if (showCustomAddonInput || showSubtitlePicker || showAudioLanguagePicker || showIptvInput || showCatalogInput || showCodeInput || uiState.showCloudPairDialog || uiState.showCloudEmailPasswordDialog) return@onPreviewKeyEvent false
 
                 if (event.type == KeyEventType.KeyDown) {
                     val currentSection = sections.getOrNull(sectionIndex).orEmpty()
@@ -1392,8 +1392,8 @@ private fun GeneralSettings(
 
         SettingsRow(
             icon = Icons.Default.HighQuality,
-            title = "Auto-Play Min Quality",
-            subtitle = "Minimum quality required for single-source auto-play",
+            title = "Auto-Play Max Quality",
+            subtitle = "Maximum quality for single-source auto-play",
             value = autoPlayMinQuality,
             isFocused = focusedIndex == 6,
             onClick = onAutoPlayMinQualityClick
