@@ -69,8 +69,26 @@ class ProfileViewModel @Inject constructor(
                 val isLoggedIn = state is com.arflix.tv.data.repository.AuthState.Authenticated
                 _uiState.value = _uiState.value.copy(isLoggedIn = isLoggedIn)
                 if (isLoggedIn) {
-                    // Re-pull profiles from cloud after login
-                    pullProfilesFromCloud()
+                    // Try to pull profiles from cloud
+                    val cloudPayload = authRepository.loadAccountSyncPayload().getOrNull()
+                    val cloudHasProfiles = if (!cloudPayload.isNullOrBlank()) {
+                        runCatching {
+                            val root = JSONObject(cloudPayload)
+                            val arr = root.optJSONArray("profiles")
+                            arr != null && arr.length() > 0
+                        }.getOrDefault(false)
+                    } else false
+
+                    if (cloudHasProfiles) {
+                        pullProfilesFromCloud()
+                    } else {
+                        // Cloud is empty — force push local profiles so table is populated
+                        val localProfiles = profileRepository.getProfiles()
+                        if (localProfiles.isNotEmpty()) {
+                            System.err.println("[CLOUD-SYNC] Auth detected, cloud empty, pushing ${localProfiles.size} local profiles")
+                            profileRepository.syncProfilesToCloud()
+                        }
+                    }
                 }
             }
         }
