@@ -186,6 +186,12 @@ class ProfileRepository @Inject constructor(
         pushProfilesStateToCloud()
     }
 
+    /**
+     * Force-push local profiles to cloud. Called after first-time code login
+     * so profiles created before authentication are synced to the cloud.
+     */
+    suspend fun syncProfilesToCloud() = pushProfilesStateToCloud()
+
     private suspend fun pushProfilesStateToCloud() {
         val userId = authRepository.getCurrentUserId() ?: "local"
         val profiles = getProfiles()

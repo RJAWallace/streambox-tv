@@ -33,7 +33,12 @@ data class ProfileUiState(
     val selectedAvatarId: Int = 0, // 0 = legacy letter, 1-24 = cartoon avatar
     val isKidsProfile: Boolean = false,
     // Edit profile dialog state
-    val editingProfile: Profile? = null
+    val editingProfile: Profile? = null,
+    // Code entry
+    val isLoggedIn: Boolean = false,
+    val showCodeDialog: Boolean = false,
+    val codeValidating: Boolean = false,
+    val codeError: String? = null
 )
 
 @HiltViewModel
@@ -54,7 +59,70 @@ class ProfileViewModel @Inject constructor(
     init {
         loadProfiles()
         observeProfiles()
+        observeAuthState()
         pullProfilesFromCloud()
+    }
+
+    private fun observeAuthState() {
+        viewModelScope.launch {
+            authRepository.authState.collect { state ->
+                val isLoggedIn = state is com.arflix.tv.data.repository.AuthState.Authenticated
+                _uiState.value = _uiState.value.copy(isLoggedIn = isLoggedIn)
+                if (isLoggedIn) {
+                    // Re-pull profiles from cloud after login
+                    pullProfilesFromCloud()
+                }
+            }
+        }
+    }
+
+    fun showCodeDialog() {
+        _uiState.value = _uiState.value.copy(showCodeDialog = true, codeError = null)
+    }
+
+    fun hideCodeDialog() {
+        _uiState.value = _uiState.value.copy(showCodeDialog = false, codeError = null)
+    }
+
+    fun loginWithCode(code: String) {
+        val trimmed = code.trim().uppercase()
+        if (trimmed.length != 5 || !trimmed.all { it.isLetter() }) {
+            _uiState.value = _uiState.value.copy(codeError = "Enter a 5-letter code")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(codeValidating = true, codeError = null)
+            val result = authRepository.loginWithCode(trimmed)
+            if (result.isSuccess) {
+                // Check if cloud has existing profiles
+                val cloudPayload = authRepository.loadAccountSyncPayload().getOrNull()
+                val cloudHasProfiles = if (!cloudPayload.isNullOrBlank()) {
+                    runCatching {
+                        val root = JSONObject(cloudPayload)
+                        val arr = root.optJSONArray("profiles")
+                        arr != null && arr.length() > 0
+                    }.getOrDefault(false)
+                } else false
+
+                if (cloudHasProfiles) {
+                    // Cloud has profiles → pull them down (cross-device sync)
+                    pullProfilesFromCloud()
+                } else {
+                    // Cloud is empty → push local profiles up so they're synced
+                    profileRepository.syncProfilesToCloud()
+                }
+                _uiState.value = _uiState.value.copy(
+                    codeValidating = false,
+                    showCodeDialog = false,
+                    codeError = null
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    codeValidating = false,
+                    codeError = "Invalid code"
+                )
+            }
+        }
     }
 
     private fun loadProfiles() {

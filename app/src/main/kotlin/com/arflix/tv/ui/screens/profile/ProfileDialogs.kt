@@ -429,6 +429,176 @@ private fun AvatarGridItem(
 }
 
 // ============================================================
+// Code Entry Dialog — 5-letter account linking code
+// ============================================================
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+fun CodeEntryDialog(
+    isValidating: Boolean = false,
+    error: String? = null,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var code by remember { mutableStateOf("") }
+    var editTextRef by remember { mutableStateOf<EditText?>(null) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.90f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(340.dp)
+                    .background(Color(0xFF141414), RoundedCornerShape(16.dp))
+                    .padding(28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Link Account",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Enter your 5-letter code to sync profiles and settings across devices",
+                    fontSize = 13.sp,
+                    color = Color.White.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Code input
+                Surface(
+                    onClick = {
+                        editTextRef?.let { et ->
+                            et.requestFocus()
+                            et.postDelayed({
+                                val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                                @Suppress("DEPRECATION")
+                                imm?.showSoftInput(et, InputMethodManager.SHOW_FORCED)
+                            }, 100)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(8.dp)),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = Color(0xFF222222),
+                        focusedContainerColor = Color(0xFF222222)
+                    ),
+                    border = ClickableSurfaceDefaults.border(
+                        border = androidx.tv.material3.Border(
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (error != null) Color(0xFFDC2626) else Color.White.copy(alpha = 0.2f)
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ),
+                        focusedBorder = androidx.tv.material3.Border(
+                            border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    )
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            EditText(ctx).apply {
+                                editTextRef = this
+                                setTextColor(android.graphics.Color.WHITE)
+                                setHintTextColor(android.graphics.Color.GRAY)
+                                hint = "ABCDE"
+                                textSize = 20f
+                                background = null
+                                setPadding(36, 32, 36, 32)
+                                isSingleLine = true
+                                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+                                imeOptions = EditorInfo.IME_ACTION_DONE
+                                isFocusable = true
+                                isFocusableInTouchMode = true
+                                letterSpacing = 0.3f
+                                gravity = android.view.Gravity.CENTER
+                                filters = arrayOf(android.text.InputFilter.LengthFilter(5))
+                                doAfterTextChanged { editable ->
+                                    code = editable?.toString()?.uppercase() ?: ""
+                                }
+                                setOnEditorActionListener { _, actionId, _ ->
+                                    if (actionId == EditorInfo.IME_ACTION_DONE) {
+                                        if (code.length == 5) onConfirm(code)
+                                        true
+                                    } else false
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        update = { et ->
+                            val upper = code.uppercase()
+                            if (et.text.toString() != upper) {
+                                et.setText(upper)
+                                et.setSelection(upper.length)
+                            }
+                        }
+                    )
+                }
+
+                // Error message
+                if (error != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = error,
+                        fontSize = 12.sp,
+                        color = Color(0xFFEF4444),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // Validating indicator
+                if (isValidating) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Validating...",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Buttons
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    DialogButton(
+                        text = if (isValidating) "Linking..." else "Link",
+                        enabled = code.length == 5 && !isValidating,
+                        onClick = { onConfirm(code) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    DialogButton(
+                        text = "Cancel",
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
 // Dialog button
 // ============================================================
 

@@ -214,6 +214,13 @@ fun ProfileSelectionScreen(
                 isManageMode = uiState.isManageMode,
                 onClick = { if (isReadyForInput) viewModel.toggleManageMode() }
             )
+
+            if (!uiState.isLoggedIn) {
+                Spacer(modifier = Modifier.height(16.dp))
+                LinkAccountButton(
+                    onClick = { if (isReadyForInput) viewModel.showCodeDialog() }
+                )
+            }
         }
 
         // Add Profile Dialog
@@ -240,6 +247,16 @@ fun ProfileSelectionScreen(
                 onConfirm = { viewModel.updateProfile() },
                 onDelete = { viewModel.deleteProfile(profile); viewModel.hideEditDialog() },
                 onDismiss = { viewModel.hideEditDialog() }
+            )
+        }
+
+        // Code Entry Dialog
+        if (uiState.showCodeDialog) {
+            CodeEntryDialog(
+                isValidating = uiState.codeValidating,
+                error = uiState.codeError,
+                onConfirm = { code -> viewModel.loginWithCode(code) },
+                onDismiss = { viewModel.hideCodeDialog() }
             )
         }
     }
@@ -451,6 +468,45 @@ private fun ManageProfilesButton(
     ) {
         Text(
             text = if (isManageMode) "Done" else "Manage Profiles",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color.White,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+        )
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun LinkAccountButton(
+    onClick: () -> Unit
+) {
+    var isFocused by remember { mutableIntStateOf(0) }
+
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .onFocusChanged { isFocused = if (it.isFocused) 1 else 0 },
+        shape = ClickableSurfaceDefaults.shape(
+            shape = RoundedCornerShape(4.dp)
+        ),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color(0xFF1A6B3C).copy(alpha = 0.6f),
+            focusedContainerColor = Color(0xFF1A6B3C)
+        ),
+        border = ClickableSurfaceDefaults.border(
+            border = androidx.tv.material3.Border(
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2ECC71).copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(4.dp)
+            ),
+            focusedBorder = androidx.tv.material3.Border(
+                border = androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF2ECC71)),
+                shape = RoundedCornerShape(4.dp)
+            )
+        )
+    ) {
+        Text(
+            text = "Link Account",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = Color.White,
