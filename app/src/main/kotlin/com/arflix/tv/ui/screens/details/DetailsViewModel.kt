@@ -721,6 +721,11 @@ class DetailsViewModel @Inject constructor(
                     playLabel = quickResume.label,
                     playPositionMs = quickResume.positionMs
                 )
+                // Switch to the season the user was watching if different
+                if (mediaType == MediaType.TV && quickResume.season != null &&
+                    quickResume.season != _uiState.value.currentSeason) {
+                    loadSeason(quickResume.season)
+                }
             }
 
             // Then refresh Trakt watched status in background

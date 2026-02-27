@@ -41,6 +41,7 @@ interface SupabaseApi {
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Header("Prefer") prefer: String = "resolution=merge-duplicates",
+        @Query("on_conflict") onConflict: String = "user_id,media_type,show_tmdb_id,season,episode,source",
         @Body item: WatchHistoryRecord
     )
     

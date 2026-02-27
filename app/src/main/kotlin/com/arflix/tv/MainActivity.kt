@@ -305,20 +305,11 @@ fun ArflixApp(
         }
     }
 
-    // Route to login if not authenticated, otherwise profile selection
+    // Route to login on first startup if not authenticated
     val startDestination = when (authState) {
         is AuthState.Authenticated -> Screen.ProfileSelection.route
         is AuthState.NotAuthenticated -> Screen.Login.route
-        else -> Screen.ProfileSelection.route // Loading — show profiles, will redirect if needed
-    }
-
-    // Redirect to login if auth state changes to unauthenticated
-    LaunchedEffect(authState) {
-        if (authState is AuthState.NotAuthenticated) {
-            navController.navigate(Screen.Login.route) {
-                popUpTo(0) { inclusive = true }
-            }
-        }
+        else -> Screen.ProfileSelection.route
     }
 
     Box(
