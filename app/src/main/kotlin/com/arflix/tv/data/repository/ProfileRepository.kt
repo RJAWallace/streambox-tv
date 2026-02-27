@@ -196,6 +196,7 @@ class ProfileRepository @Inject constructor(
         val userId = authRepository.getCurrentUserId() ?: "local"
         val profiles = getProfiles()
         val activeProfileId = getActiveProfileId()
+        System.err.println("[CLOUD-SYNC] pushProfiles: userId=$userId, profileCount=${profiles.size}, activeId=$activeProfileId")
         val existingPayload = authRepository.loadAccountSyncPayload().getOrNull().orEmpty()
         val root = if (existingPayload.isBlank()) JSONObject() else runCatching { JSONObject(existingPayload) }.getOrElse { JSONObject() }
         root.put("version", root.optInt("version", 1))
@@ -203,7 +204,12 @@ class ProfileRepository @Inject constructor(
         root.put("activeProfileId", activeProfileId ?: JSONObject.NULL)
         root.put("profiles", JSONArray(gson.toJson(profiles)))
         root.put("userId", userId)
-        authRepository.saveAccountSyncPayload(root.toString())
+        val result = authRepository.saveAccountSyncPayload(root.toString())
+        if (result.isFailure) {
+            System.err.println("[CLOUD-SYNC] FAILED to save payload: ${result.exceptionOrNull()?.message}")
+        } else {
+            System.err.println("[CLOUD-SYNC] Payload saved successfully for userId=$userId")
+        }
     }
 
     /**

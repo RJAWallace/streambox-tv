@@ -297,6 +297,7 @@ class AuthRepository @Inject constructor(
     suspend fun saveAccountSyncPayload(payload: String): Result<Unit> {
         val userId = getCurrentUserId()
             ?: profileManagerProvider.get().getProfileIdSync()
+        System.err.println("[CLOUD-SYNC] saveAccountSyncPayload: userId=$userId, payloadLen=${payload.length}")
         return try {
             supabaseApi.upsertAccountSyncState(
                 record = com.arflix.tv.data.api.AccountSyncStateRecord(
@@ -304,8 +305,10 @@ class AuthRepository @Inject constructor(
                     payload = payload
                 )
             )
+            System.err.println("[CLOUD-SYNC] Supabase upsert OK for userId=$userId")
             Result.success(Unit)
         } catch (e: Exception) {
+            System.err.println("[CLOUD-SYNC] Supabase upsert FAILED for userId=$userId: ${e.message}")
             Result.failure(e)
         }
     }

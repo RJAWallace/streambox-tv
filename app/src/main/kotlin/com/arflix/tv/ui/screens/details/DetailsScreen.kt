@@ -214,9 +214,17 @@ fun DetailsScreen(
         if (uiState.isLoadingStreams) return@LaunchedEffect
 
         val validStreams = uiState.streams.filter(::isAutoPlayableStream)
-        // Auto-pick the best stream and play directly (Netflix-style).
+        // Apply max quality cap — exclude streams above the user's setting
+        val maxThreshold = maxQualityThreshold(uiState.autoPlayMinQuality)
+        val cappedStreams = if (maxThreshold > 0) {
+            validStreams.filter { qualityScoreForAutoPlay(it.quality) <= maxThreshold }
+        } else {
+            validStreams // "Any" = no cap
+        }
+        // Auto-pick the best stream within cap and play directly (Netflix-style).
         // Source selector is only shown via the explicit "Sources" button.
-        val bestStream = validStreams
+        // Fall back to all valid streams if nothing matches the cap.
+        val bestStream = (cappedStreams.ifEmpty { validStreams })
             .sortedByDescending { qualityScoreForAutoPlay(it.quality) }
             .firstOrNull()
 
@@ -681,7 +689,7 @@ private fun qualityScoreForAutoPlay(quality: String): Int {
     }
 }
 
-private fun minQualityThreshold(value: String): Int {
+private fun maxQualityThreshold(value: String): Int {
     return when (value.trim().lowercase()) {
         "720p", "hd" -> 2
         "1080p", "fullhd", "fhd" -> 3

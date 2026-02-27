@@ -243,7 +243,9 @@ interface SupabaseApi {
     suspend fun upsertAccountSyncState(
         @Header("Authorization") auth: String = "Bearer ${Constants.SUPABASE_ANON_KEY}",
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
+        @Header("Content-Type") contentType: String = "application/json",
         @Header("Prefer") prefer: String = "resolution=merge-duplicates",
+        @Query("on_conflict") onConflict: String = "user_id",
         @Body record: AccountSyncStateRecord
     )
 
