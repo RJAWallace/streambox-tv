@@ -195,12 +195,14 @@ fun SettingsScreen(
     // Keep auto-scroll only for long, dynamic sections to avoid jumpy motion in General/IPTV.
     LaunchedEffect(contentFocusIndex, sectionIndex, activeZone, uiState.catalogs.size, uiState.addons.size) {
         if (activeZone != Zone.CONTENT) return@LaunchedEffect
-        if (sectionIndex != 2 && sectionIndex != 3) return@LaunchedEffect
         if (scrollState.maxValue <= 0) return@LaunchedEffect
 
         val maxIndex = when (sectionIndex) {
+            0 -> 6 // General: 7 items
+            1 -> 2 // IPTV: 3 items
             2 -> uiState.catalogs.size // Add + N catalogs
             3 -> uiState.addons.size // N addons + add button
+            4 -> 2 // Accounts: 3 items
             else -> 0
         }.coerceAtLeast(1)
 
