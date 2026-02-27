@@ -18,7 +18,6 @@ import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.repository.AuthState
 import com.arflix.tv.ui.screens.details.DetailsScreen
 import com.arflix.tv.ui.screens.home.HomeScreen
-import com.arflix.tv.ui.screens.login.LoginScreen
 import com.arflix.tv.ui.screens.player.PlayerScreen
 import com.arflix.tv.ui.screens.search.SearchScreen
 import com.arflix.tv.ui.screens.settings.SettingsScreen
@@ -116,17 +115,6 @@ fun AppNavigation(
         navController = navController,
         startDestination = startDestination
     ) {
-        // Login screen
-        composable(Screen.Login.route) {
-            LoginScreen(
-                onLoginSuccess = {
-                    navController.navigate(Screen.Home.route) {
-                        popUpTo(Screen.Login.route) { inclusive = true }
-                    }
-                }
-            )
-        }
-        
         // Home screen
         composable(Screen.Home.route) {
             HomeScreen(

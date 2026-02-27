@@ -131,6 +131,7 @@ class HomeViewModel @Inject constructor(
     val cardLogoUrls: StateFlow<Map<String, String>> = _cardLogoUrls.asStateFlow()
 
     // Debounce job for hero updates (Phase 6.1)
+    private var pendingHeroLoadKey: String? = null
     private var heroUpdateJob: Job? = null
     private var heroDetailsJob: Job? = null
     private var prefetchJob: Job? = null
@@ -1152,6 +1153,9 @@ class HomeViewModel @Inject constructor(
      */
     fun updateHeroItem(item: MediaItem) {
         val cacheKey = "${item.mediaType}_${item.id}"
+        // Skip if already loading this exact hero item
+        if (pendingHeroLoadKey == cacheKey && heroUpdateJob?.isActive == true) return
+        pendingHeroLoadKey = cacheKey
         val cachedLogo = getCachedLogo(cacheKey)
 
         // Phase 6.2-6.3: Detect fast scrolling
@@ -1371,7 +1375,12 @@ class HomeViewModel @Inject constructor(
     /**
      * Phase 1.1: Preload logos for category + next 2 categories
      */
+    private var lastPreloadLogoTimestamp = 0L
+
     fun preloadLogosForCategory(categoryIndex: Int, prioritizeVisible: Boolean = false) {
+        val now = SystemClock.elapsedRealtime()
+        if (!prioritizeVisible && now - lastPreloadLogoTimestamp < 350L) return
+        lastPreloadLogoTimestamp = now
         if (prioritizeVisible) {
             preloadCategoryPriorityJob?.cancel()
         } else {

@@ -130,6 +130,8 @@ fun SettingsScreen(
     var showCustomAddonInput by remember { mutableStateOf(false) }
     var customAddonUrl by remember { mutableStateOf("") }
     var showIptvInput by remember { mutableStateOf(false) }
+    var showCodeInput by remember { mutableStateOf(false) }
+    var cloudCode by remember { mutableStateOf("") }
     var iptvM3uUrl by remember { mutableStateOf(uiState.iptvM3uUrl) }
     var iptvEpgUrl by remember { mutableStateOf(uiState.iptvEpgUrl) }
     var iptvXtreamUsername by remember { mutableStateOf("") }
@@ -457,7 +459,8 @@ fun SettingsScreen(
                                                     if (uiState.isLoggedIn) {
                                                         viewModel.logout()
                                                     } else {
-                                                        viewModel.startCloudAuth()
+                                                        cloudCode = ""
+                                                        showCodeInput = true
                                                     }
                                                 }
                                                 1 -> { // Trakt
@@ -594,13 +597,17 @@ fun SettingsScreen(
                     "accounts" -> AccountsSettings(
                         isCloudAuthenticated = uiState.isLoggedIn,
                         cloudEmail = uiState.accountEmail,
-                        cloudHint = null,
+                        cloudHint = when (uiState.codeValidationState) {
+                            CodeValidationState.VALIDATING -> "Validating..."
+                            CodeValidationState.INVALID -> "Invalid code"
+                            else -> null
+                        },
                         isTraktAuthenticated = uiState.isTraktAuthenticated,
                         traktCode = uiState.traktCode?.userCode,
                         traktUrl = uiState.traktCode?.verificationUrl,
                         isTraktPolling = uiState.isTraktPolling,
                         focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
-                        onConnectCloud = { viewModel.startCloudAuth() },
+                        onConnectCloud = { cloudCode = ""; showCodeInput = true },
                         onDisconnectCloud = { viewModel.logout() },
                         onConnectTrakt = { viewModel.startTraktAuth() },
                         onCancelTrakt = { viewModel.cancelTraktAuth() },
@@ -693,6 +700,31 @@ fun SettingsScreen(
                 onDismiss = {
                     catalogInputUrl = ""
                     showCatalogInput = false
+                }
+            )
+        }
+
+        // Cloud Access Code Modal
+        if (showCodeInput) {
+            InputModal(
+                title = "Enter Access Code",
+                fields = listOf(
+                    InputField(
+                        label = "5-letter code",
+                        value = cloudCode,
+                        placeholder = "ABCDE",
+                        onValueChange = { cloudCode = it.uppercase().filter { c -> c.isLetter() }.take(5) }
+                    )
+                ),
+                onConfirm = {
+                    if (cloudCode.length == 5) {
+                        viewModel.loginWithCode(cloudCode)
+                        showCodeInput = false
+                    }
+                },
+                onDismiss = {
+                    cloudCode = ""
+                    showCodeInput = false
                 }
             )
         }
@@ -1970,7 +2002,7 @@ private fun AccountsSettings(
 
         AccountRow(
             name = "ARVIO Cloud",
-            description = cloudEmail ?: "Optional account for syncing profiles, addons, catalogs and IPTV settings",
+            description = cloudEmail ?: "Enter code to sync addons, catalogs and IPTV settings",
             isConnected = isCloudAuthenticated,
             isPolling = false,
             authCode = null,

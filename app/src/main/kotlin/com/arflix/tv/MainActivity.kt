@@ -68,7 +68,6 @@ import com.arflix.tv.data.repository.ProfileRepository
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.navigation.AppNavigation
 import com.arflix.tv.navigation.Screen
-import com.arflix.tv.ui.screens.login.LoginScreen
 import com.arflix.tv.ui.startup.StartupViewModel
 import com.arflix.tv.ui.theme.ArflixTvTheme
 import com.arflix.tv.ui.theme.BackgroundGradientCenter

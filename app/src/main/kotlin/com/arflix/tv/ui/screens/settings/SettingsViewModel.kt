@@ -51,6 +51,8 @@ enum class ToastType {
     SUCCESS, ERROR, INFO
 }
 
+enum class CodeValidationState { IDLE, VALIDATING, VALID, INVALID }
+
 data class SettingsUiState(
     val defaultSubtitle: String = "Off",
     val subtitleOptions: List<String> = emptyList(),
@@ -98,7 +100,8 @@ data class SettingsUiState(
     val torrServerBaseUrl: String = "",
     // Toast
     val toastMessage: String? = null,
-    val toastType: ToastType = ToastType.INFO
+    val toastType: ToastType = ToastType.INFO,
+    val codeValidationState: CodeValidationState = CodeValidationState.IDLE
 )
 
 @HiltViewModel
@@ -724,7 +727,8 @@ class SettingsViewModel @Inject constructor(
                 val userId = (state as? AuthState.Authenticated)?.userId
                 _uiState.value = _uiState.value.copy(
                     isLoggedIn = isLoggedIn,
-                    accountEmail = email
+                    accountEmail = email,
+                    codeValidationState = if (isLoggedIn) CodeValidationState.VALID else CodeValidationState.IDLE
                 )
                 if (!userId.isNullOrBlank() && lastCloudSyncedUserId != userId) {
                     lastCloudSyncedUserId = userId
@@ -1074,6 +1078,33 @@ class SettingsViewModel @Inject constructor(
                         toastType = ToastType.ERROR
                     )
                 }
+        }
+    }
+
+    fun loginWithCode(code: String) {
+        val trimmed = code.trim().uppercase()
+        if (trimmed.length != 5 || !trimmed.all { it.isLetter() }) return
+        if (_uiState.value.isCloudAuthWorking) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                codeValidationState = CodeValidationState.VALIDATING,
+                isCloudAuthWorking = true
+            )
+            val result = authRepository.loginWithCode(trimmed)
+            if (result.isSuccess) {
+                streamRepository.syncAddonsFromCloud()
+                _uiState.value = _uiState.value.copy(
+                    codeValidationState = CodeValidationState.VALID,
+                    isCloudAuthWorking = false
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    codeValidationState = CodeValidationState.INVALID,
+                    isCloudAuthWorking = false,
+                    toastMessage = "Invalid code",
+                    toastType = ToastType.ERROR
+                )
+            }
         }
     }
 

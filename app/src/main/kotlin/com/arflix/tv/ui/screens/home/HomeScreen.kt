@@ -3,7 +3,6 @@
 package com.arflix.tv.ui.screens.home
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -321,20 +320,16 @@ fun HomeScreen(
             }
     }
 
-    // Update hero based on focused item with adaptive idle delay to avoid heavy churn while scrolling
+    // Update hero based on focused item — collectLatest cancels on each new emission,
+    // so a short 100ms delay naturally skips updates during fast scrolling.
     LaunchedEffect(Unit) {
         snapshotFlow { Pair(focusState.currentRowIndex, focusState.currentItemIndex) }
             .distinctUntilChanged()
             .collectLatest { (rowIndex, itemIndex) ->
                 val categoriesSnapshot = latestDisplayCategories
                 if (categoriesSnapshot.isEmpty() || focusState.isSidebarFocused) return@collectLatest
-                val now = SystemClock.elapsedRealtime()
-                val isFastScrolling = now - focusState.lastNavEventTime < fastScrollThresholdMs
                 viewModel.onFocusChanged(rowIndex, itemIndex, shouldPrefetch = true)
-                delay(if (isFastScrolling) 400L else 150L)
-
-                val idleFor = SystemClock.elapsedRealtime() - focusState.lastNavEventTime
-                if (idleFor < fastScrollThresholdMs) return@collectLatest
+                delay(100L)
 
                 val row = categoriesSnapshot.getOrNull(rowIndex)
                 val newHeroItem = row?.items?.getOrNull(itemIndex)
@@ -382,8 +377,15 @@ fun HomeScreen(
             .fillMaxSize()
             .background(BackgroundDark)
       ) {
-        // Smooth hero background transition
+        // Hero background with lightweight alpha fade (avoids Crossfade double-composition)
         val currentBackdrop = displayHeroItem?.backdrop ?: displayHeroItem?.image
+        val backdropAlpha = remember { Animatable(1f) }
+        LaunchedEffect(currentBackdrop) {
+            if (currentBackdrop != null) {
+                backdropAlpha.snapTo(0.7f)
+                backdropAlpha.animateTo(1f, animationSpec = tween(300))
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -396,29 +398,25 @@ fun HomeScreen(
                     )
             )
 
-            Crossfade(
-                targetState = currentBackdrop,
-                animationSpec = tween(durationMillis = 300),
-                label = "hero_backdrop_crossfade"
-            ) { backdropUrl ->
-                if (backdropUrl != null) {
-                    val (backdropWidthPx, backdropHeightPx) = backdropSize
-                    val request = remember(backdropUrl, backdropWidthPx, backdropHeightPx) {
-                        ImageRequest.Builder(context)
-                            .data(backdropUrl)
-                            .size(backdropWidthPx, backdropHeightPx)
-                            .precision(Precision.INEXACT)  // allow cache reuse for similar sizes
-                            .allowHardware(true)
-                            .crossfade(false)
-                            .build()
-                    }
-                    AsyncImage(
-                        model = request,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
+            if (currentBackdrop != null) {
+                val (backdropWidthPx, backdropHeightPx) = backdropSize
+                val request = remember(currentBackdrop, backdropWidthPx, backdropHeightPx) {
+                    ImageRequest.Builder(context)
+                        .data(currentBackdrop)
+                        .size(backdropWidthPx, backdropHeightPx)
+                        .precision(Precision.INEXACT)
+                        .allowHardware(true)
+                        .crossfade(false)
+                        .build()
                 }
+                AsyncImage(
+                    model = request,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = backdropAlpha.value }
+                )
             }
 
             // === SCRIM SYSTEM - single draw pass for all 3 gradients (avoids 3x fullscreen overdraw) ===
@@ -861,6 +859,10 @@ private fun HomeInputLayer(
         }
     }
 
+    val maxItemsInCurrentRow by remember {
+        derivedStateOf { categories.getOrNull(focusState.currentRowIndex)?.items?.size ?: 0 }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -899,8 +901,7 @@ private fun HomeInputLayer(
                                 focusState.isSidebarFocused = false
                                 true
                             } else {
-                                val maxItems = categories.getOrNull(focusState.currentRowIndex)?.items?.size ?: 0
-                                if (focusState.currentItemIndex < maxItems - 1) {
+                                if (focusState.currentItemIndex < maxItemsInCurrentRow - 1) {
                                     focusState.currentItemIndex++
                                     focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                                 }
