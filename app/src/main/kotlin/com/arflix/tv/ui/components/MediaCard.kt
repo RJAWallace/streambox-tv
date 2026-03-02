@@ -39,6 +39,8 @@ import coil.request.ImageRequest
 import coil.size.Precision
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.WatchProgress
+import androidx.compose.material.icons.filled.Visibility
 import com.arflix.tv.ui.skin.ArvioFocusableSurface
 import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
@@ -193,31 +195,59 @@ fun MediaCard(
                     )
                 }
 
-                // Subtle green watched badge
-                if (item.isWatched) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                        .padding(bottom = 6.dp, end = 6.dp)
-                        .size(14.dp)
-                        .background(
-                            color = ArvioSkin.colors.watchedGreen.copy(alpha = 0.2f),
-                            shape = CircleShape
-                        )
-                        .border(
-                            width = 1.dp,
-                            color = ArvioSkin.colors.watchedGreen,
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = null,
-                        tint = ArvioSkin.colors.watchedGreen,
-                        modifier = Modifier.size(8.dp)
-                    )
-                }
+                // Watched badge — green tick for fully watched, eye icon for in-progress
+                when (item.watchProgress) {
+                    WatchProgress.COMPLETED -> {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(bottom = 6.dp, end = 6.dp)
+                                .size(14.dp)
+                                .background(
+                                    color = ArvioSkin.colors.watchedGreen.copy(alpha = 0.2f),
+                                    shape = CircleShape
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = ArvioSkin.colors.watchedGreen,
+                                    shape = CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = ArvioSkin.colors.watchedGreen,
+                                modifier = Modifier.size(8.dp)
+                            )
+                        }
+                    }
+                    WatchProgress.IN_PROGRESS -> {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(bottom = 6.dp, end = 6.dp)
+                                .size(14.dp)
+                                .background(
+                                    color = Color.White.copy(alpha = 0.15f),
+                                    shape = CircleShape
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    shape = CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Visibility,
+                                contentDescription = null,
+                                tint = Color.White.copy(alpha = 0.8f),
+                                modifier = Modifier.size(8.dp)
+                            )
+                        }
+                    }
+                    WatchProgress.NONE -> { /* No badge */ }
                 }
 
                 // Subtle progress bar for Continue Watching

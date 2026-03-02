@@ -24,6 +24,7 @@ data class MediaItem(
     val backdrop: String? = null,
     val progress: Int = 0,
     val isWatched: Boolean = false,
+    val watchProgress: WatchProgress = WatchProgress.NONE,
     val traktId: Int? = null,
     val badge: String? = null,
     val genreIds: List<Int> = emptyList(),
@@ -47,6 +48,14 @@ data class MediaItem(
 
 enum class MediaType {
     MOVIE, TV
+}
+
+/**
+ * Watched progress state for media items.
+ * NONE = not watched, IN_PROGRESS = some episodes watched, COMPLETED = all episodes/movie watched
+ */
+enum class WatchProgress {
+    NONE, IN_PROGRESS, COMPLETED
 }
 
 /**

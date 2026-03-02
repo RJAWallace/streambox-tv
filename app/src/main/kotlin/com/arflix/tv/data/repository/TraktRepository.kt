@@ -1364,6 +1364,7 @@ class TraktRepository @Inject constructor(
         // Watched status caches (prevents Profile 1's Trakt data showing in Profile 2)
         watchedMoviesCache.clear()
         watchedEpisodesCache.clear()
+        cacheEpoch++  // Invalidate any in-flight cache initialization
         cacheInitialized = false
         cacheInitializing = false
 
@@ -2335,6 +2336,7 @@ class TraktRepository @Inject constructor(
     private val watchedEpisodesCache = mutableSetOf<String>()
     private var cacheInitialized = false
     @Volatile private var cacheInitializing = false
+    @Volatile private var cacheEpoch = 0
 
     /**
      * Invalidate watched cache - forces reload on next access
@@ -2364,6 +2366,7 @@ class TraktRepository @Inject constructor(
             return
         }
         cacheInitializing = true
+        val epochAtStart = cacheEpoch
         try {
             val hasAuth = refreshTokenIfNeeded() != null
 
@@ -2381,27 +2384,30 @@ class TraktRepository @Inject constructor(
                 runCatching { getWatchedEpisodes() }.getOrDefault(emptySet())
             } else emptySet()
 
-            watchedMoviesCache.clear()
-            watchedMoviesCache.addAll(if (supabaseMovies.isNotEmpty()) supabaseMovies else traktMovies)
+            // Only commit results if profile hasn't changed during fetch
+            if (cacheEpoch == epochAtStart) {
+                watchedMoviesCache.clear()
+                watchedMoviesCache.addAll(if (supabaseMovies.isNotEmpty()) supabaseMovies else traktMovies)
 
-            watchedEpisodesCache.clear()
-            watchedEpisodesCache.addAll(if (supabaseEpisodes.isNotEmpty()) supabaseEpisodes else traktEpisodes)
+                watchedEpisodesCache.clear()
+                watchedEpisodesCache.addAll(if (supabaseEpisodes.isNotEmpty()) supabaseEpisodes else traktEpisodes)
 
-            cacheInitialized = true
+                cacheInitialized = true
+            }
         } catch (e: Exception) {
             // If all sources fail, try direct Trakt load as last resort
             try {
                 val hasAuth = refreshTokenIfNeeded() != null
-                if (hasAuth) {
+                if (hasAuth && cacheEpoch == epochAtStart) {
                     watchedMoviesCache.clear()
                     watchedMoviesCache.addAll(getWatchedMovies())
                     watchedEpisodesCache.clear()
                     watchedEpisodesCache.addAll(getWatchedEpisodes())
+                    cacheInitialized = true
                 }
-                cacheInitialized = true
             } catch (_: Exception) {
                 // No data available - mark as initialized with empty caches
-                cacheInitialized = true
+                if (cacheEpoch == epochAtStart) cacheInitialized = true
             }
         } finally {
             cacheInitializing = false
@@ -2473,6 +2479,14 @@ class TraktRepository @Inject constructor(
     fun hasWatchedEpisodes(showTmdbId: Int): Boolean {
         val prefix = "show_tmdb:$showTmdbId:"
         return watchedEpisodesCache.any { it.startsWith(prefix) }
+    }
+
+    /**
+     * Count how many episodes have been watched for a show
+     */
+    fun getWatchedEpisodeCount(showTmdbId: Int): Int {
+        val prefix = "show_tmdb:$showTmdbId:"
+        return watchedEpisodesCache.count { it.startsWith(prefix) }
     }
 
     // ========== Background Sync ==========

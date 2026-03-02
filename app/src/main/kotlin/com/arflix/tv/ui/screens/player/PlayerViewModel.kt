@@ -56,7 +56,14 @@ data class PlayerUiState(
     val error: String? = null,
     // Skip intro/recap
     val activeSkipInterval: SkipInterval? = null,
-    val skipIntervalDismissed: Boolean = false
+    val skipIntervalDismissed: Boolean = false,
+    // Next episode overlay
+    val showNextEpisodeOverlay: Boolean = false,
+    val nextEpisodeTitle: String = "",
+    val nextEpisodeDescription: String = "",
+    val nextEpisodeThumbnail: String? = null,
+    val nextEpisodeCountdownSec: Int = 10,
+    val outroStartMs: Long? = null
 )
 
 @HiltViewModel
@@ -523,6 +530,64 @@ class PlayerViewModel @Inject constructor(
 
     fun dismissSkipInterval() {
         _uiState.value = _uiState.value.copy(skipIntervalDismissed = true)
+    }
+
+    // ========== Next Episode Overlay ==========
+
+    /**
+     * Fetch next episode metadata from TMDB and store outro start time from skip intervals.
+     * Called once when player loads a TV episode.
+     */
+    fun fetchNextEpisodeInfo(tmdbId: Int, season: Int, episode: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Get outro start time from skip intervals
+                val outroInterval = skipIntervals.firstOrNull { it.type == "outro" }
+                val outroStart = outroInterval?.startMs
+
+                // Fetch next episode from TMDB season data
+                val nextEp = try {
+                    val seasonData = tmdbApi.getTvSeason(tmdbId, season, Constants.TMDB_API_KEY)
+                    seasonData.episodes.firstOrNull { it.episodeNumber == episode + 1 }
+                } catch (_: Exception) { null }
+                    ?: try {
+                        // Try first episode of next season
+                        val nextSeasonData = tmdbApi.getTvSeason(tmdbId, season + 1, Constants.TMDB_API_KEY)
+                        nextSeasonData.episodes.firstOrNull { it.episodeNumber == 1 }
+                    } catch (_: Exception) { null }
+
+                if (nextEp != null) {
+                    _uiState.value = _uiState.value.copy(
+                        nextEpisodeTitle = "S${nextEp.seasonNumber}E${nextEp.episodeNumber}: ${nextEp.name}",
+                        nextEpisodeDescription = nextEp.overview.orEmpty(),
+                        nextEpisodeThumbnail = nextEp.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" },
+                        outroStartMs = outroStart
+                    )
+                }
+            } catch (_: Exception) {
+                // Silently fail — overlay just won't show
+            }
+        }
+    }
+
+    /**
+     * Re-check outro timing after skip intervals are loaded (they may load async).
+     */
+    fun updateOutroFromIntervals() {
+        val outroInterval = skipIntervals.firstOrNull { it.type == "outro" }
+        if (outroInterval != null && _uiState.value.outroStartMs == null) {
+            _uiState.value = _uiState.value.copy(outroStartMs = outroInterval.startMs)
+        }
+    }
+
+    fun showNextEpisodeOverlay() {
+        if (_uiState.value.nextEpisodeTitle.isNotEmpty()) {
+            _uiState.value = _uiState.value.copy(showNextEpisodeOverlay = true)
+        }
+    }
+
+    fun dismissNextEpisodeOverlay() {
+        _uiState.value = _uiState.value.copy(showNextEpisodeOverlay = false)
     }
 
     private fun updateActiveSkipInterval(positionMs: Long) {

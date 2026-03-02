@@ -288,9 +288,7 @@ class WatchHistoryRepository @Inject constructor(
             }
             records
                 .map { it.toEntry() }
-                .maxByOrNull { entry ->
-                    parseEpoch(entry.updated_at).coerceAtLeast(parseEpoch(entry.paused_at))
-                }
+                .firstOrNull()
         } catch (_: Exception) {
             null
         }

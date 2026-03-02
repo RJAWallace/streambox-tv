@@ -102,6 +102,7 @@ import coil.size.Precision
 import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.ui.components.LoadingIndicator
 import com.arflix.tv.ui.components.MediaCard as ArvioMediaCard
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.MediaContextMenu
@@ -154,19 +155,40 @@ private val tvGenres = mapOf(
 private class HomeFocusState(
     initialRowIndex: Int = 0,
     initialItemIndex: Int = 0,
-    initialSidebarIndex: Int = 1
+    initialSidebarIndex: Int = 1,
+    initialRowItemIndices: Map<Int, Int> = emptyMap()
 ) {
     var isSidebarFocused by mutableStateOf(false)
     var sidebarFocusIndex by mutableIntStateOf(initialSidebarIndex)
     var currentRowIndex by mutableIntStateOf(initialRowIndex)
     var currentItemIndex by mutableIntStateOf(initialItemIndex)
     var lastNavEventTime by mutableLongStateOf(0L)
+    /** Per-row scroll position persistence — remembers last focused item index per row */
+    val rowItemIndices = mutableMapOf<Int, Int>().apply { putAll(initialRowItemIndices) }
 
     companion object {
         val Saver: androidx.compose.runtime.saveable.Saver<HomeFocusState, List<Int>> =
             androidx.compose.runtime.saveable.Saver(
-                save = { listOf(it.currentRowIndex, it.currentItemIndex, it.sidebarFocusIndex) },
-                restore = { HomeFocusState(it[0], it[1], it[2]) }
+                save = { state ->
+                    // Encode: [rowIndex, itemIndex, sidebarIndex, numEntries, row0, idx0, row1, idx1, ...]
+                    val base = listOf(state.currentRowIndex, state.currentItemIndex, state.sidebarFocusIndex)
+                    val entries = state.rowItemIndices.entries.toList()
+                    base + listOf(entries.size) + entries.flatMap { listOf(it.key, it.value) }
+                },
+                restore = { list ->
+                    val rowIndex = list[0]
+                    val itemIndex = list[1]
+                    val sidebarIndex = list[2]
+                    val numEntries = list.getOrNull(3) ?: 0
+                    val rowMap = mutableMapOf<Int, Int>()
+                    for (i in 0 until numEntries) {
+                        val offset = 4 + i * 2
+                        val row = list.getOrNull(offset) ?: continue
+                        val idx = list.getOrNull(offset + 1) ?: continue
+                        rowMap[row] = idx
+                    }
+                    HomeFocusState(rowIndex, itemIndex, sidebarIndex, rowMap)
+                }
             )
     }
 }
@@ -225,10 +247,18 @@ fun HomeScreen(
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + 300L
     }
 
+    // Loading overlay when navigating to details
+    var isNavigatingToDetails by remember { mutableStateOf(false) }
+
+    // Flag to defer focus reset until categories have been refreshed
+    var pendingFocusResetOnResume by remember { mutableStateOf(false) }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                isNavigatingToDetails = false
                 viewModel.refreshContinueWatchingOnly()
+                pendingFocusResetOnResume = true
                 suppressSelectUntilMs = SystemClock.elapsedRealtime() + 300L
             }
         }
@@ -304,20 +334,15 @@ fun HomeScreen(
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
     val fastScrollThresholdMs = 650L
 
-    // Reset to Continue Watching row when returning from details/player
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                val cats = latestDisplayCategories
-                if (cats.isNotEmpty() && cats[0].id == "continue_watching") {
-                    focusState.currentRowIndex = 0
-                    focusState.currentItemIndex = 0
-                }
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
+    // Reset focus to CW row AFTER categories have been refreshed (not immediately on resume).
+    // This fixes the race condition where sync focus reset ran before async CW refresh completed.
+    LaunchedEffect(displayCategories, pendingFocusResetOnResume) {
+        if (pendingFocusResetOnResume && displayCategories.isNotEmpty()
+            && displayCategories[0].id == "continue_watching"
+        ) {
+            focusState.currentRowIndex = 0
+            focusState.currentItemIndex = 0
+            pendingFocusResetOnResume = false
         }
     }
 
@@ -464,7 +489,10 @@ fun HomeScreen(
             usePosterCards = usePosterCards,
             isContextMenuOpen = showContextMenu,
             currentProfile = currentProfile,
-            onNavigateToDetails = onNavigateToDetails,
+            onNavigateToDetails = { mediaType, mediaId, season, episode ->
+                isNavigatingToDetails = true
+                onNavigateToDetails(mediaType, mediaId, season, episode)
+            },
             onNavigateToSearch = onNavigateToSearch,
             onNavigateToWatchlist = onNavigateToWatchlist,
             onNavigateToTv = onNavigateToTv,
@@ -480,6 +508,16 @@ fun HomeScreen(
 
         // Clock top-right (profile moved to sidebar)
         TopBarClock(modifier = Modifier.align(Alignment.TopEnd))
+
+        // Loading overlay shown when navigating to details
+        if (isNavigatingToDetails) {
+            Box(
+                modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                LoadingIndicator()
+            }
+        }
         
         // Error state - show message when loading failed and no content
         if (!uiState.isLoading && displayCategories.isEmpty() && uiState.error != null) {
@@ -928,8 +966,11 @@ private fun HomeInputLayer(
                                 focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                                 true
                             } else if (!focusState.isSidebarFocused && focusState.currentRowIndex > 0) {
+                                // Save current row's item index before moving
+                                focusState.rowItemIndices[focusState.currentRowIndex] = focusState.currentItemIndex
                                 focusState.currentRowIndex--
-                                focusState.currentItemIndex = 0
+                                // Restore saved item index for the new row
+                                focusState.currentItemIndex = focusState.rowItemIndices[focusState.currentRowIndex] ?: 0
                                 focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                                 true
                             } else {
@@ -942,8 +983,11 @@ private fun HomeInputLayer(
                                 focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                                 true
                             } else if (!focusState.isSidebarFocused && focusState.currentRowIndex < categories.size - 1) {
+                                // Save current row's item index before moving
+                                focusState.rowItemIndices[focusState.currentRowIndex] = focusState.currentItemIndex
                                 focusState.currentRowIndex++
-                                focusState.currentItemIndex = 0
+                                // Restore saved item index for the new row
+                                focusState.currentItemIndex = focusState.rowItemIndices[focusState.currentRowIndex] ?: 0
                                 focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                                 true
                             } else {
@@ -1122,12 +1166,13 @@ private fun HomeRowsLayer(
                             isRanked = category.title.contains("Top 10", ignoreCase = true),
                             usePosterCards = usePosterCards,
                             startPadding = contentStartPadding,
-                            focusedItemIndex = if (index == focusState.currentRowIndex) focusState.currentItemIndex else 0,
+                            focusedItemIndex = if (index == focusState.currentRowIndex) focusState.currentItemIndex else (focusState.rowItemIndices[index] ?: 0),
                             isFastScrolling = isFastScrolling,
                             onItemClick = onItemClick,
                             onItemFocused = { _, itemIdx ->
                                 focusState.currentRowIndex = index
                                 focusState.currentItemIndex = itemIdx
+                                focusState.rowItemIndices[index] = itemIdx
                                 focusState.isSidebarFocused = false
                                 focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             }

@@ -18,6 +18,7 @@ import com.arflix.tv.data.repository.StreamRepository
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.data.repository.WatchlistRepository
+import androidx.datastore.preferences.core.stringPreferencesKey
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.settingsDataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -162,7 +163,8 @@ class DetailsViewModel @Inject constructor(
     private var loadStreamsRequestId: Long = 0L
     private val seasonCache = mutableMapOf<Int, List<Episode>>()
     private fun autoPlaySingleSourceKey() = profileManager.profileBooleanKey("auto_play_single_source")
-    private fun autoPlayMinQualityKey() = profileManager.profileStringKey("auto_play_min_quality")
+    // Device-local key — max quality is per-device, NOT profile-scoped
+    private fun autoPlayMinQualityKey() = stringPreferencesKey("device_auto_play_min_quality")
 
     private fun isBlankRating(value: String): Boolean {
         return value.isBlank() || value == "0.0" || value == "0"

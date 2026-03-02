@@ -12,6 +12,7 @@ import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.model.CatalogConfig
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.WatchProgress
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.TraktSyncService
@@ -1086,14 +1087,20 @@ class HomeViewModel @Inject constructor(
 
             val watchedMovies = traktRepository.getWatchedMoviesFromCache()
 
-            // Performance: Build show watched map only for unique TV shows
-            val showWatched = mutableMapOf<Int, Boolean>()
+            // Performance: Build show watch progress map only for unique TV shows
+            val showProgress = mutableMapOf<Int, WatchProgress>()
             val seenShows = mutableSetOf<Int>()
             for (category in categories) {
                 if (category.id == "continue_watching") continue
                 for (item in category.items) {
                     if (item.mediaType == MediaType.TV && seenShows.add(item.id)) {
-                        showWatched[item.id] = traktRepository.hasWatchedEpisodes(item.id)
+                        val watchedCount = traktRepository.getWatchedEpisodeCount(item.id)
+                        val totalEpisodes = item.totalEpisodes ?: 0
+                        showProgress[item.id] = when {
+                            watchedCount == 0 -> WatchProgress.NONE
+                            totalEpisodes > 0 && watchedCount >= totalEpisodes -> WatchProgress.COMPLETED
+                            else -> WatchProgress.IN_PROGRESS
+                        }
                     }
                 }
             }
@@ -1106,13 +1113,14 @@ class HomeViewModel @Inject constructor(
                 } else {
                     var categoryChanged = false
                     val updatedItems = category.items.map { item ->
-                        val newWatched = when (item.mediaType) {
-                            MediaType.MOVIE -> watchedMovies.contains(item.id)
-                            MediaType.TV -> showWatched[item.id] == true
+                        val newProgress = when (item.mediaType) {
+                            MediaType.MOVIE -> if (watchedMovies.contains(item.id)) WatchProgress.COMPLETED else WatchProgress.NONE
+                            MediaType.TV -> showProgress[item.id] ?: WatchProgress.NONE
                         }
-                        if (item.isWatched != newWatched) {
+                        val newWatched = newProgress == WatchProgress.COMPLETED
+                        if (item.isWatched != newWatched || item.watchProgress != newProgress) {
                             categoryChanged = true
-                            item.copy(isWatched = newWatched)
+                            item.copy(isWatched = newWatched, watchProgress = newProgress)
                         } else {
                             item
                         }

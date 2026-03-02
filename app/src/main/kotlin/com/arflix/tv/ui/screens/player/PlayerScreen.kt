@@ -100,6 +100,7 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.ui.components.LoadingIndicator
+import com.arflix.tv.ui.components.NextEpisodeOverlay
 import com.arflix.tv.ui.components.StreamSelector
 import com.arflix.tv.ui.components.WaveLoadingDots
 import com.arflix.tv.ui.theme.ArflixTypography
@@ -162,6 +163,9 @@ fun PlayerScreen(
     var isControlScrubbing by remember { mutableStateOf(false) }
     var scrubPreviewPosition by remember { mutableLongStateOf(0L) }
     var controlsSeekJob by remember { mutableStateOf<Job?>(null) }
+
+    // Next episode overlay state
+    var nextEpisodeOverlayTriggered by remember { mutableStateOf(false) }
 
     // Volume state
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -256,6 +260,15 @@ fun PlayerScreen(
             preferredSourceName = preferredSourceName,
             startPositionMs = startPositionMs
         )
+    }
+
+    // Fetch next episode info for the overlay (TV shows only)
+    LaunchedEffect(mediaType, mediaId, seasonNumber, episodeNumber) {
+        if (mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null) {
+            // Small delay to let skip intervals load first
+            delay(2000)
+            viewModel.fetchNextEpisodeInfo(mediaId, seasonNumber, episodeNumber)
+        }
     }
 
     // Track current stream index for auto-advancement on error
@@ -984,6 +997,16 @@ fun PlayerScreen(
         while (!playerReleased) {
             currentPosition = exoPlayer.currentPosition
             viewModel.onPlaybackPosition(currentPosition)
+            // Trigger next episode overlay when outro/credits start
+            if (!nextEpisodeOverlayTriggered && mediaType == MediaType.TV) {
+                val outroMs = uiState.outroStartMs
+                if (outroMs != null && currentPosition >= outroMs) {
+                    nextEpisodeOverlayTriggered = true
+                    viewModel.showNextEpisodeOverlay()
+                }
+                // Also update outro timing in case skip intervals loaded after initial fetch
+                viewModel.updateOutroFromIntervals()
+            }
             val rawDuration = exoPlayer.duration
             duration = if (rawDuration > 0L && rawDuration != C.TIME_UNSET) rawDuration else 0L
             progress = if (duration > 0L) {
@@ -1142,16 +1165,27 @@ fun PlayerScreen(
 
             }
 
-            // Auto-play next episode when current one ends
+            // Show next episode overlay or auto-advance when episode ends
             if (exoPlayer.playbackState == Player.STATE_ENDED && mediaType == MediaType.TV) {
                 if (seasonNumber != null && episodeNumber != null) {
-                    val selected = uiState.selectedStream
-                    onPlayNext(
-                        seasonNumber,
-                        episodeNumber + 1,
-                        selected?.addonId?.takeIf { it.isNotBlank() },
-                        selected?.source?.takeIf { it.isNotBlank() }
-                    )
+                    if (uiState.showNextEpisodeOverlay) {
+                        // Overlay is already showing from outro trigger — let countdown handle advance
+                    } else if (uiState.nextEpisodeTitle.isNotEmpty()) {
+                        // No outro data but we have next episode info — show overlay now
+                        if (!nextEpisodeOverlayTriggered) {
+                            nextEpisodeOverlayTriggered = true
+                            viewModel.showNextEpisodeOverlay()
+                        }
+                    } else {
+                        // No next episode info at all — auto-advance immediately
+                        val selected = uiState.selectedStream
+                        onPlayNext(
+                            seasonNumber,
+                            episodeNumber + 1,
+                            selected?.addonId?.takeIf { it.isNotBlank() },
+                            selected?.source?.takeIf { it.isNotBlank() }
+                        )
+                    }
                 }
             }
 
@@ -1163,22 +1197,26 @@ fun PlayerScreen(
         onDispose {
             controlsSeekJob?.cancel()
             playerReleased = true
-            runCatching {
-                val safeDuration = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
-                val safeProgressPercent = if (safeDuration > 0L) {
-                    ((exoPlayer.currentPosition.toDouble() / safeDuration.toDouble()) * 100.0)
-                        .toInt()
-                        .coerceIn(0, 100)
-                } else {
-                    0
+            // Only save progress if playback actually started — prevents marking
+            // episodes as watched when a source fails to load
+            if (hasPlaybackStarted) {
+                runCatching {
+                    val safeDuration = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
+                    val safeProgressPercent = if (safeDuration > 0L) {
+                        ((exoPlayer.currentPosition.toDouble() / safeDuration.toDouble()) * 100.0)
+                            .toInt()
+                            .coerceIn(0, 100)
+                    } else {
+                        0
+                    }
+                    viewModel.saveProgress(
+                        exoPlayer.currentPosition,
+                        safeDuration,
+                        safeProgressPercent,
+                        isPlaying = exoPlayer.isPlaying,
+                        playbackState = exoPlayer.playbackState
+                    )
                 }
-                viewModel.saveProgress(
-                    exoPlayer.currentPosition,
-                    safeDuration,
-                    safeProgressPercent,
-                    isPlaying = exoPlayer.isPlaying,
-                    playbackState = exoPlayer.playbackState
-                )
             }
             runCatching { exoPlayer.release() }
         }
@@ -1544,6 +1582,32 @@ fun PlayerScreen(
                 .padding(start = 32.dp, bottom = if (showControls) 120.dp else 32.dp)
         )
 
+        // Next Episode Overlay — Netflix-style countdown at credits/end
+        if (mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null) {
+            NextEpisodeOverlay(
+                isVisible = uiState.showNextEpisodeOverlay,
+                showTitle = uiState.title,
+                episodeTitle = uiState.nextEpisodeTitle,
+                seasonNumber = seasonNumber,
+                episodeNumber = episodeNumber + 1,
+                episodeImage = uiState.nextEpisodeThumbnail,
+                countdownSeconds = 10,
+                onPlayNext = {
+                    viewModel.dismissNextEpisodeOverlay()
+                    val selected = uiState.selectedStream
+                    onPlayNext(
+                        seasonNumber,
+                        episodeNumber + 1,
+                        selected?.addonId?.takeIf { it.isNotBlank() },
+                        selected?.source?.takeIf { it.isNotBlank() }
+                    )
+                },
+                onCancel = {
+                    viewModel.dismissNextEpisodeOverlay()
+                }
+            )
+        }
+
         // Netflix-style Controls Overlay
         AnimatedVisibility(
             visible = showControls && !showSubtitleMenu && !showSourceMenu,
@@ -1762,8 +1826,13 @@ fun PlayerScreen(
                                                 true
                                             }
                                             Key.Enter, Key.DirectionCenter -> {
-                                                // Commit pending scrub immediately
-                                                commitControlsSeekNow()
+                                                if (isControlScrubbing) {
+                                                    // Commit pending scrub immediately
+                                                    commitControlsSeekNow()
+                                                } else {
+                                                    // Toggle play/pause when not scrubbing
+                                                    exoPlayer.playWhenReady = !exoPlayer.playWhenReady
+                                                }
                                                 true
                                             }
                                             Key.DirectionDown -> {

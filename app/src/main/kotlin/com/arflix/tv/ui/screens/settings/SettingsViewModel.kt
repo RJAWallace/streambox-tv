@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.settings
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.api.TraktDeviceCode
@@ -147,8 +148,9 @@ class SettingsViewModel @Inject constructor(
     private fun autoPlayNextKeyFor(profileId: String) = profileManager.profileBooleanKeyFor(profileId, "auto_play_next")
     private fun autoPlaySingleSourceKey() = profileManager.profileBooleanKey("auto_play_single_source")
     private fun autoPlaySingleSourceKeyFor(profileId: String) = profileManager.profileBooleanKeyFor(profileId, "auto_play_single_source")
-    private fun autoPlayMinQualityKey() = profileManager.profileStringKey("auto_play_min_quality")
-    private fun autoPlayMinQualityKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "auto_play_min_quality")
+    // Device-local key — max quality is per-device, NOT synced to cloud or scoped to profile
+    private fun autoPlayMinQualityKey() = stringPreferencesKey("device_auto_play_min_quality")
+    private fun autoPlayMinQualityKeyFor(profileId: String) = stringPreferencesKey("device_auto_play_min_quality")
     private fun includeSpecialsKey() = profileManager.profileBooleanKey("include_specials")
     private fun includeSpecialsKeyFor(profileId: String) = profileManager.profileBooleanKeyFor(profileId, "include_specials")
     private val gson = Gson()
@@ -604,7 +606,7 @@ class SettingsViewModel @Inject constructor(
                 prefs[autoPlayMinQualityKey()] = normalized
             }
             _uiState.value = _uiState.value.copy(autoPlayMinQuality = normalized)
-            syncLocalStateToCloud(silent = true)
+            // Device-local setting — do NOT sync to cloud
         }
     }
 

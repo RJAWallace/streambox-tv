@@ -217,7 +217,17 @@ fun DetailsScreen(
         // Apply max quality cap — exclude streams above the user's setting
         val maxThreshold = maxQualityThreshold(uiState.autoPlayMinQuality)
         val cappedStreams = if (maxThreshold > 0) {
-            validStreams.filter { qualityScoreForAutoPlay(it.quality) <= maxThreshold }
+            // Exclude streams above the cap AND unknown quality (score 0) — unknown
+            // sources could be any quality so we can't trust they're within the cap.
+            // Prefer known-quality streams that fit the cap.
+            val knownCapped = validStreams.filter { stream ->
+                val score = qualityScoreForAutoPlay(stream.quality)
+                score in 1..maxThreshold
+            }
+            // If no known-quality streams match, fall back to unknown + capped
+            knownCapped.ifEmpty {
+                validStreams.filter { qualityScoreForAutoPlay(it.quality) <= maxThreshold }
+            }
         } else {
             validStreams // "Any" = no cap
         }
@@ -681,10 +691,19 @@ private data class PendingAutoPlayRequest(
 
 private fun qualityScoreForAutoPlay(quality: String): Int {
     return when {
-        quality.contains("4K", ignoreCase = true) || quality.contains("2160p", ignoreCase = true) -> 4
-        quality.contains("1080p", ignoreCase = true) -> 3
-        quality.contains("720p", ignoreCase = true) -> 2
-        quality.contains("480p", ignoreCase = true) -> 1
+        quality.contains("4K", ignoreCase = true)
+            || quality.contains("2160", ignoreCase = true)
+            || quality.contains("UHD", ignoreCase = true) -> 4
+        quality.contains("1080", ignoreCase = true)
+            || quality.contains("FHD", ignoreCase = true)
+            || quality.contains("FullHD", ignoreCase = true) -> 3
+        quality.contains("720", ignoreCase = true)
+            || quality.contains("HD", ignoreCase = true)
+                && !quality.contains("UHD", ignoreCase = true)
+                && !quality.contains("FHD", ignoreCase = true)
+                && !quality.contains("FullHD", ignoreCase = true) -> 2
+        quality.contains("480", ignoreCase = true)
+            || quality.contains("SD", ignoreCase = true) -> 1
         else -> 0
     }
 }
@@ -1388,11 +1407,10 @@ private fun HomeStyleRowAutoScroll(
     itemSpacing: androidx.compose.ui.unit.Dp,
     initialScrollIndex: Int = 0
 ) {
-    // One-time initial scroll regardless of focus — centers episode list on current episode
-    var didInitialScroll by remember { mutableStateOf(false) }
-    LaunchedEffect(initialScrollIndex, totalItems) {
-        if (!didInitialScroll && initialScrollIndex > 0 && totalItems > 0) {
-            didInitialScroll = true
+    // Scroll to target episode whenever initialScrollIndex changes (e.g., season switch).
+    // Keyed on initialScrollIndex so it re-triggers correctly, not just once.
+    LaunchedEffect(initialScrollIndex) {
+        if (initialScrollIndex > 0 && totalItems > 0) {
             rowState.scrollToItem(initialScrollIndex.coerceAtMost((totalItems - 1).coerceAtLeast(0)))
         }
     }
@@ -1801,13 +1819,13 @@ private fun SeasonButton(
     val shape = RoundedCornerShape(8.dp)
     val backgroundColor = when {
         isFocused -> Color.White
-        isSelected -> Color.White.copy(alpha = 0.2f)
-        else -> Color.White.copy(alpha = 0.08f)
+        isSelected -> Color.White.copy(alpha = 0.25f)
+        else -> Color(0xFF1A1A1A).copy(alpha = 0.75f)
     }
     val textColor = when {
         isFocused -> Color.Black
         isSelected -> Color.White
-        else -> Color.White.copy(alpha = 0.6f)
+        else -> Color.White.copy(alpha = 0.85f)
     }
 
     val isFullyWatched = totalCount > 0 && watchedCount >= totalCount
@@ -1815,6 +1833,10 @@ private fun SeasonButton(
     Row(
         modifier = Modifier
             .background(backgroundColor, shape)
+            .then(
+                if (!isFocused) Modifier.border(1.dp, Color.White.copy(alpha = 0.15f), shape)
+                else Modifier
+            )
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1823,7 +1845,12 @@ private fun SeasonButton(
             text = "Season $season",
             style = ArvioSkin.typography.button.copy(
                 fontSize = 13.sp,
-                fontWeight = if (isFocused || isSelected) FontWeight.Bold else FontWeight.Medium
+                fontWeight = if (isFocused || isSelected) FontWeight.Bold else FontWeight.Medium,
+                shadow = if (!isFocused) Shadow(
+                    color = Color.Black,
+                    offset = Offset(1f, 1f),
+                    blurRadius = 3f
+                ) else null
             ),
             color = textColor
         )
