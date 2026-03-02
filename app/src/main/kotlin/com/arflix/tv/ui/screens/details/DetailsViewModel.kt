@@ -446,22 +446,34 @@ class DetailsViewModel @Inject constructor(
                         // Fast path: show Continue immediately from local history.
                         val playTarget = buildPlayTarget(mediaType, null, resumeInfo, initialSeason, initialEpisode)
                         updateState { state ->
+                            val epIdx = if (playTarget?.episode != null && state.episodes.isNotEmpty()) {
+                                state.episodes.indexOfFirst { it.episodeNumber == playTarget.episode }.coerceAtLeast(0)
+                            } else state.initialEpisodeIndex
+                            val sIdx = if (playTarget?.season != null) (playTarget.season - 1).coerceAtLeast(0) else state.initialSeasonIndex
                             state.copy(
                                 playSeason = playTarget?.season,
                                 playEpisode = playTarget?.episode,
                                 playLabel = playTarget?.label,
-                                playPositionMs = playTarget?.positionMs
+                                playPositionMs = playTarget?.positionMs,
+                                initialEpisodeIndex = epIdx,
+                                initialSeasonIndex = sIdx
                             )
                         }
                     } else {
                         val seasonProgressResult = runCatching { seasonProgressDeferred?.await() }.getOrNull()
                         val playTarget = buildPlayTarget(mediaType, seasonProgressResult, null, initialSeason, initialEpisode)
                         updateState { state ->
+                            val epIdx = if (playTarget?.episode != null && state.episodes.isNotEmpty()) {
+                                state.episodes.indexOfFirst { it.episodeNumber == playTarget.episode }.coerceAtLeast(0)
+                            } else state.initialEpisodeIndex
+                            val sIdx = if (playTarget?.season != null) (playTarget.season - 1).coerceAtLeast(0) else state.initialSeasonIndex
                             state.copy(
                                 playSeason = playTarget?.season,
                                 playEpisode = playTarget?.episode,
                                 playLabel = playTarget?.label,
-                                playPositionMs = playTarget?.positionMs
+                                playPositionMs = playTarget?.positionMs,
+                                initialEpisodeIndex = epIdx,
+                                initialSeasonIndex = sIdx
                             )
                         }
                     }
@@ -1065,11 +1077,19 @@ class DetailsViewModel @Inject constructor(
                 val cloudResume = runCatching { cloudDeferred.await() }.getOrNull()
                 val localResume = runCatching { traktDeferred.await() }.getOrNull()
 
-                when {
+                val inProgressResume = when {
                     cloudResume == null -> localResume
                     localResume == null -> cloudResume
                     localResume.positionMs > cloudResume.positionMs -> localResume
                     else -> cloudResume
+                }
+
+                // If no in-progress resume found for TV, check if the latest entry is completed
+                // and resolve the next episode (Netflix-style "Play S5E5" after finishing S5E4)
+                if (inProgressResume == null && mediaType == MediaType.TV) {
+                    resolveNextEpisodeFromHistory(tmdbId)
+                } else {
+                    inProgressResume
                 }
             }
         } catch (e: Exception) {
@@ -1079,16 +1099,85 @@ class DetailsViewModel @Inject constructor(
 
     private suspend fun fetchResumeInfoFromHistoryOnly(tmdbId: Int, mediaType: MediaType): ResumeInfo? {
         return try {
-            val entry = watchHistoryRepository.getLatestProgress(mediaType, tmdbId) ?: return null
-            buildResumeFromProgress(
-                mediaType = mediaType,
-                tmdbId = tmdbId,
-                season = entry.season,
-                episode = entry.episode,
-                progress = entry.progress,
-                positionSeconds = entry.position_seconds,
-                durationSeconds = entry.duration_seconds
-            )
+            val entry = watchHistoryRepository.getLatestProgress(mediaType, tmdbId)
+            if (entry != null) {
+                return buildResumeFromProgress(
+                    mediaType = mediaType,
+                    tmdbId = tmdbId,
+                    season = entry.season,
+                    episode = entry.episode,
+                    progress = entry.progress,
+                    positionSeconds = entry.position_seconds,
+                    durationSeconds = entry.duration_seconds
+                )
+            }
+            // No in-progress entry — check for completed episode and resolve next
+            if (mediaType == MediaType.TV) {
+                resolveNextEpisodeFromHistory(tmdbId)
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * When the most recent episode is fully watched, resolve the next episode.
+     * Returns a ResumeInfo with position 0 and label like "Play S5E5".
+     */
+    private suspend fun resolveNextEpisodeFromHistory(tmdbId: Int): ResumeInfo? {
+        return try {
+            val latestEntry = watchHistoryRepository.getLatestEntry(MediaType.TV, tmdbId) ?: return null
+            val season = latestEntry.season ?: return null
+            val episode = latestEntry.episode ?: return null
+            if (season <= 0 || episode <= 0) return null
+
+            // Check if this entry is actually completed
+            val threshold = Constants.WATCHED_THRESHOLD / 100f
+            val progress = latestEntry.progress.coerceIn(0f, 1f)
+            if (progress < threshold && progress > 0f) return null // Still in progress, shouldn't reach here
+
+            resolveNextEpisode(tmdbId, season, episode)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Check TMDB for the next episode after the given season/episode.
+     * First tries currentEpisode+1 in the same season, then falls back to next season E1.
+     */
+    private suspend fun resolveNextEpisode(tmdbId: Int, season: Int, episode: Int): ResumeInfo? {
+        return try {
+            // Try next episode in same season
+            val seasonDetails = tmdbApi.getTvSeason(tmdbId, season, Constants.TMDB_API_KEY)
+            val nextEpInSeason = seasonDetails.episodes.any { it.episodeNumber == episode + 1 }
+            if (nextEpInSeason) {
+                return ResumeInfo(
+                    season = season,
+                    episode = episode + 1,
+                    label = "Play S${season}E${episode + 1}",
+                    positionMs = 0L
+                )
+            }
+
+            // Try first episode of next season
+            val tvDetails = tmdbApi.getTvDetails(tmdbId, Constants.TMDB_API_KEY)
+            val totalSeasons = tvDetails.numberOfSeasons
+            if (season < totalSeasons) {
+                val nextSeasonDetails = tmdbApi.getTvSeason(tmdbId, season + 1, Constants.TMDB_API_KEY)
+                if (nextSeasonDetails.episodes.isNotEmpty()) {
+                    val firstEp = nextSeasonDetails.episodes.minByOrNull { it.episodeNumber }?.episodeNumber ?: 1
+                    return ResumeInfo(
+                        season = season + 1,
+                        episode = firstEp,
+                        label = "Play S${season + 1}E${firstEp}",
+                        positionMs = 0L
+                    )
+                }
+            }
+
+            // No more episodes — show finished, fall back to null (will show "Start S1E1")
+            null
         } catch (_: Exception) {
             null
         }

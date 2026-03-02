@@ -43,7 +43,7 @@ object Constants {
     val GOOGLE_WEB_CLIENT_ID: String get() = BuildConfig.GOOGLE_WEB_CLIENT_ID
 
     // Progress thresholds
-    const val WATCHED_THRESHOLD = 90 // Percentage at which content is considered watched
+    const val WATCHED_THRESHOLD = 95 // Percentage at which content is considered watched
     const val MIN_PROGRESS_THRESHOLD = 3 // Minimum % progress to appear in Continue Watching (filters accidental plays)
     const val MAX_PROGRESS_ENTRIES = 50  // Max playback progress entries to process
     const val MAX_CONTINUE_WATCHING = 50 // Max items in Continue Watching row

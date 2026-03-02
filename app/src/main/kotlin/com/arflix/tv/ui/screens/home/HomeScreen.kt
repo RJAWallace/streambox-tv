@@ -304,6 +304,23 @@ fun HomeScreen(
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
     val fastScrollThresholdMs = 650L
 
+    // Reset to Continue Watching row when returning from details/player
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val cats = latestDisplayCategories
+                if (cats.isNotEmpty() && cats[0].id == "continue_watching") {
+                    focusState.currentRowIndex = 0
+                    focusState.currentItemIndex = 0
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     // Context menu state (Menu button only, no long-press)
     var showContextMenu by remember { mutableStateOf(false) }
     var contextMenuItem by remember { mutableStateOf<MediaItem?>(null) }
@@ -1060,7 +1077,8 @@ private fun HomeRowsLayer(
         val targetIndex = currentRowIndex.coerceIn(0, (categories.size - 1).coerceAtLeast(0))
         LaunchedEffect(targetIndex) {
             val currentIndex = listState.firstVisibleItemIndex
-            if (currentIndex == targetIndex) return@LaunchedEffect
+            val currentOffset = listState.firstVisibleItemScrollOffset
+            if (currentIndex == targetIndex && currentOffset == 0) return@LaunchedEffect
             listState.animateScrollToItem(
                 index = targetIndex,
                 scrollOffset = 0

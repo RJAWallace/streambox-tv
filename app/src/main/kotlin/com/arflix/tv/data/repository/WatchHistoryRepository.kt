@@ -263,6 +263,40 @@ class WatchHistoryRepository @Inject constructor(
     }
 
     /**
+     * Get the latest entry for a show/movie regardless of completion status.
+     * Used to determine the next episode when the most recent one is fully watched.
+     */
+    suspend fun getLatestEntry(
+        mediaType: MediaType,
+        tmdbId: Int
+    ): WatchHistoryEntry? {
+        val userId = authRepositoryProvider.get().getCurrentUserId()
+            ?: profileManager.getProfileIdSync()
+        val mediaTypeKey = if (mediaType == MediaType.MOVIE) "movie" else "tv"
+
+        return try {
+            val records = executeSupabaseCall("get latest entry by show") { auth ->
+                supabaseApi.getWatchHistoryItem(
+                    auth = auth,
+                    userId = "eq.$userId",
+                    showTmdbId = "eq.$tmdbId",
+                    mediaType = "eq.$mediaTypeKey",
+                    source = profileHistorySourceFilter(),
+                    order = "updated_at.desc",
+                    limit = 50
+                )
+            }
+            records
+                .map { it.toEntry() }
+                .maxByOrNull { entry ->
+                    parseEpoch(entry.updated_at).coerceAtLeast(parseEpoch(entry.paused_at))
+                }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
      * Remove item from watch history
      */
     suspend fun removeFromHistory(

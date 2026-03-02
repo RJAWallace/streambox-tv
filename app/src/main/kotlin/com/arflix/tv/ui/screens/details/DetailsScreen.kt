@@ -1198,7 +1198,8 @@ private fun DetailsContent(
                         focusedItemIndex = episodeIndex,
                         totalItems = episodes.size,
                         itemWidth = 210.dp,
-                        itemSpacing = 14.dp
+                        itemSpacing = 14.dp,
+                        initialScrollIndex = episodeIndex
                     )
 
                     // Use rememberUpdatedState to ensure items recompose when focus changes
@@ -1384,8 +1385,18 @@ private fun HomeStyleRowAutoScroll(
     focusedItemIndex: Int,
     totalItems: Int,
     itemWidth: androidx.compose.ui.unit.Dp,
-    itemSpacing: androidx.compose.ui.unit.Dp
+    itemSpacing: androidx.compose.ui.unit.Dp,
+    initialScrollIndex: Int = 0
 ) {
+    // One-time initial scroll regardless of focus — centers episode list on current episode
+    var didInitialScroll by remember { mutableStateOf(false) }
+    LaunchedEffect(initialScrollIndex, totalItems) {
+        if (!didInitialScroll && initialScrollIndex > 0 && totalItems > 0) {
+            didInitialScroll = true
+            rowState.scrollToItem(initialScrollIndex.coerceAtMost((totalItems - 1).coerceAtLeast(0)))
+        }
+    }
+
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     val availableWidthDp = configuration.screenWidthDp.dp - 56.dp - 12.dp

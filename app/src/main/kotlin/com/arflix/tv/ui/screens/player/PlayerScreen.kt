@@ -157,11 +157,8 @@ fun PlayerScreen(
     var duration by remember { mutableLongStateOf(0L) }
     var progress by remember { mutableFloatStateOf(0f) }
 
-    // Skip overlay state - shows +10/-10 without showing full controls
-    var skipAmount by remember { mutableIntStateOf(0) }
-    var showSkipOverlay by remember { mutableStateOf(false) }
-    var lastSkipTime by remember { mutableLongStateOf(0L) }
-    var skipStartPosition by remember { mutableLongStateOf(0L) }  // Position when skipping started
+    // Seek state — tracks when a seek action happens to restart the auto-hide timer
+    var lastSeekActionTime by remember { mutableLongStateOf(0L) }
     var isControlScrubbing by remember { mutableStateOf(false) }
     var scrubPreviewPosition by remember { mutableLongStateOf(0L) }
     var controlsSeekJob by remember { mutableStateOf<Job?>(null) }
@@ -605,6 +602,7 @@ fun PlayerScreen(
 
     val queueControlsSeek: (Long) -> Unit = queueSeek@{ deltaMs ->
         if (playerReleased) return@queueSeek
+        lastSeekActionTime = System.currentTimeMillis()
         val basePosition = if (isControlScrubbing) {
             scrubPreviewPosition
         } else {
@@ -923,7 +921,8 @@ fun PlayerScreen(
     }
 
     // Auto-hide controls and return focus to container
-    LaunchedEffect(showControls, isPlaying) {
+    // lastSeekActionTime restarts the 5s timer on each seek so bar stays visible while seeking
+    LaunchedEffect(showControls, isPlaying, lastSeekActionTime) {
         if (showControls && isPlaying && !showSubtitleMenu && !showSourceMenu) {
             delay(5000)
             showControls = false
@@ -947,15 +946,7 @@ fun PlayerScreen(
         }
     }
 
-    // Auto-hide skip overlay and reset - use lastSkipTime as key to restart on each skip
-    LaunchedEffect(lastSkipTime) {
-        if (showSkipOverlay && lastSkipTime > 0) {
-            delay(1500)
-            showSkipOverlay = false
-            skipAmount = 0
-            skipStartPosition = 0L
-        }
-    }
+    // (Skip overlay removed — left/right now shows progress bar via controls)
 
     // Auto-hide volume indicator
     LaunchedEffect(showVolumeIndicator) {
@@ -1357,21 +1348,10 @@ fun PlayerScreen(
                         }
                         Key.DirectionLeft -> {
                             if (!showControls) {
-                                // Accumulate skip amount - track from start position
-                                val now = System.currentTimeMillis()
-                                if (now - lastSkipTime < 1200 && showSkipOverlay) {
-                                    // Continue accumulating from current skip session
-                                    skipAmount = (skipAmount - 10).coerceIn(-10000, 10000)
-                                } else {
-                                    // Start new skip session
-                                    skipStartPosition = exoPlayer.currentPosition
-                                    skipAmount = -10
-                                }
-                                lastSkipTime = now
-                                val unclamped = (skipStartPosition + (skipAmount * 1000L)).coerceAtLeast(0L)
-                                val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
-                                exoPlayer.seekTo(targetPosition)
-                                showSkipOverlay = true
+                                // Show progress bar and seek via controls trackbar
+                                showControls = true
+                                lastSeekActionTime = System.currentTimeMillis()
+                                queueControlsSeek(-10_000L)
                                 true
                             } else {
                                 false
@@ -1379,21 +1359,10 @@ fun PlayerScreen(
                         }
                         Key.DirectionRight -> {
                             if (!showControls) {
-                                // Accumulate skip amount - track from start position
-                                val now = System.currentTimeMillis()
-                                if (now - lastSkipTime < 1200 && showSkipOverlay) {
-                                    // Continue accumulating from current skip session
-                                    skipAmount = (skipAmount + 10).coerceIn(-10000, 10000)
-                                } else {
-                                    // Start new skip session
-                                    skipStartPosition = exoPlayer.currentPosition
-                                    skipAmount = 10
-                                }
-                                lastSkipTime = now
-                                val unclamped = (skipStartPosition + (skipAmount * 1000L)).coerceAtLeast(0L)
-                                val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
-                                exoPlayer.seekTo(targetPosition)
-                                showSkipOverlay = true
+                                // Show progress bar and seek via controls trackbar
+                                showControls = true
+                                lastSeekActionTime = System.currentTimeMillis()
+                                queueControlsSeek(10_000L)
                                 true
                             } else {
                                 false
@@ -2117,31 +2086,6 @@ fun PlayerScreen(
                     color = Color.White
                 )
             }
-        }
-
-        // Skip overlay - shows +10/-10 when seeking without controls
-        // Positioned near bottom (above trackbar area), no background, just text with shadow
-        AnimatedVisibility(
-            visible = showSkipOverlay,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 120.dp)
-        ) {
-            Text(
-                text = if (skipAmount >= 0) "+${skipAmount}s" else "${skipAmount}s",
-                style = ArflixTypography.sectionTitle.copy(
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    shadow = Shadow(
-                        color = Color.Black,
-                        offset = Offset(2f, 2f),
-                        blurRadius = 8f
-                    )
-                ),
-                color = Color.White
-            )
         }
 
         // Error modal
