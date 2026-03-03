@@ -141,10 +141,16 @@ class SearchViewModel @Inject constructor(
 
     private fun debounceSearch() {
         searchJob?.cancel()
+        // Immediately show loading to prevent "No results" flash during debounce
+        if (_uiState.value.query.length >= 2) {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+        }
         searchJob = viewModelScope.launch {
-            delay(800) // Debounce - matches webapp timing
+            delay(500) // Reduced from 800ms for snappier feel
             if (_uiState.value.query.length >= 2) {
                 search()
+            } else {
+                _uiState.value = _uiState.value.copy(isLoading = false)
             }
         }
     }

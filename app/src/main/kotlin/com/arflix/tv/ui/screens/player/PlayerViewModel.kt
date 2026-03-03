@@ -590,6 +590,16 @@ class PlayerViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(showNextEpisodeOverlay = false)
     }
 
+    /**
+     * Set a fallback outro timestamp when no skip interval data is available.
+     * Used to trigger the "Up Next" overlay ~90s before episode end.
+     */
+    fun setFallbackOutroMs(ms: Long) {
+        if (_uiState.value.outroStartMs == null && _uiState.value.nextEpisodeTitle.isNotEmpty()) {
+            _uiState.value = _uiState.value.copy(outroStartMs = ms)
+        }
+    }
+
     private fun updateActiveSkipInterval(positionMs: Long) {
         if (skipIntervals.isEmpty()) {
             if (_uiState.value.activeSkipInterval != null) {

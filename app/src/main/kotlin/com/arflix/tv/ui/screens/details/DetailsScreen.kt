@@ -185,6 +185,11 @@ fun DetailsScreen(
     var showEpisodeContextMenu by remember { mutableStateOf(false) }
     var contextMenuEpisode by remember { mutableStateOf<Episode?>(null) }
 
+    // Mark Season Watched dialog state
+    var showMarkSeasonWatchedDialog by remember { mutableStateOf(false) }
+    var markSeasonNumber by remember { mutableIntStateOf(1) }
+    var markSeasonDialogFocused by remember { mutableIntStateOf(0) } // 0=confirm, 1=cancel
+
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(mediaType, mediaId, initialSeason, initialEpisode) {
@@ -293,7 +298,7 @@ fun DetailsScreen(
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
                     // Check if any modal is showing
-                    if (showStreamSelector || showEpisodeContextMenu || uiState.showPersonModal) {
+                    if (showStreamSelector || showEpisodeContextMenu || uiState.showPersonModal || showMarkSeasonWatchedDialog) {
                         return@onPreviewKeyEvent false // Let the modal handle it
                     }
                     
@@ -535,6 +540,9 @@ fun DetailsScreen(
                             if (focusedSection == FocusSection.EPISODES) {
                                 contextMenuEpisode = uiState.episodes.getOrNull(episodeIndex)
                                 showEpisodeContextMenu = true
+                            } else if (focusedSection == FocusSection.SEASONS) {
+                                showMarkSeasonWatchedDialog = true
+                                markSeasonNumber = uiState.currentSeason
                             }
                             true
                         }
@@ -667,6 +675,113 @@ fun DetailsScreen(
                     contextMenuEpisode = null
                 }
             )
+        }
+
+        // Mark Season Watched dialog
+        if (showMarkSeasonWatchedDialog) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown) {
+                            when (event.key) {
+                                Key.DirectionLeft -> {
+                                    if (markSeasonDialogFocused > 0) markSeasonDialogFocused = 0
+                                    true
+                                }
+                                Key.DirectionRight -> {
+                                    if (markSeasonDialogFocused < 1) markSeasonDialogFocused = 1
+                                    true
+                                }
+                                Key.Enter, Key.DirectionCenter -> {
+                                    if (markSeasonDialogFocused == 0) {
+                                        // Mark all episodes in this season as watched
+                                        viewModel.markSeasonWatched(markSeasonNumber, true)
+                                    }
+                                    showMarkSeasonWatchedDialog = false
+                                    true
+                                }
+                                Key.Back, Key.Escape -> {
+                                    showMarkSeasonWatchedDialog = false
+                                    true
+                                }
+                                else -> true
+                            }
+                        } else false
+                    }
+                    .focusable(),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(400.dp)
+                        .background(Color(0xFF1A1A1A), RoundedCornerShape(16.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
+                        .padding(24.dp)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Mark Season $markSeasonNumber as Watched?",
+                            style = ArflixTypography.cardTitle,
+                            color = TextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "All episodes in this season will be marked as watched.",
+                            style = ArflixTypography.body,
+                            color = TextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // Confirm button
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .background(
+                                        if (markSeasonDialogFocused == 0) Pink else Color.White.copy(alpha = 0.1f),
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .border(
+                                        width = if (markSeasonDialogFocused == 0) 0.dp else 1.dp,
+                                        color = Color.White.copy(alpha = 0.2f),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Mark Watched",
+                                    style = ArflixTypography.button,
+                                    color = Color.White
+                                )
+                            }
+                            // Cancel button
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .background(
+                                        if (markSeasonDialogFocused == 1) Color.White else Color.White.copy(alpha = 0.1f),
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .border(
+                                        width = if (markSeasonDialogFocused == 1) 0.dp else 1.dp,
+                                        color = Color.White.copy(alpha = 0.2f),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Cancel",
+                                    style = ArflixTypography.button,
+                                    color = if (markSeasonDialogFocused == 1) Color.Black else Color.White
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Toast notifications
@@ -1457,6 +1572,9 @@ private fun HomeStyleRowAutoScroll(
         with(density) { (itemWidth + itemSpacing).toPx().coerceAtLeast(1f) }
     }
 
+    // Peek offset: show a sliver of the previous item when not at the first position
+    val peekOffsetPx = remember(density) { with(density) { 35.dp.roundToPx() } }
+
     var lastScrollIndex by remember { mutableIntStateOf(-1) }
     LaunchedEffect(isCurrentRow) {
         if (!isCurrentRow) {
@@ -1472,25 +1590,27 @@ private fun HomeStyleRowAutoScroll(
             0
         }
 
+        // When at first item, scroll flush to start (no peek)
         if (focusedItemIndex == 0 && scrollTargetIndex == 0) {
-            rowState.animateScrollToItem(index = 0, scrollOffset = 0)
+            rowState.scrollToItem(index = 0, scrollOffset = 0)
             lastScrollIndex = 0
             return@LaunchedEffect
         }
 
-        if (lastScrollIndex == scrollTargetIndex && extraOffset == 0) return@LaunchedEffect
-        if (lastScrollIndex == -1) {
-            rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
-            lastScrollIndex = scrollTargetIndex
-            return@LaunchedEffect
-        }
-        val delta = scrollTargetIndex - lastScrollIndex
-        if (delta == 0 && extraOffset > 0) {
-            rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
-        } else if (abs(delta) > 1) {
-            rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
-        } else if (delta != 0) {
-            rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+        // Apply peek offset: show sliver of previous item when scrolled past first
+        val peek = if (scrollTargetIndex > 0 && extraOffset == 0) -peekOffsetPx else 0
+        val finalOffset = extraOffset + peek
+
+        if (lastScrollIndex == scrollTargetIndex && finalOffset == 0 && peek == 0) return@LaunchedEffect
+
+        // Use instant scroll for ±1 item moves to prevent jitter; animate for bigger jumps
+        val delta = if (lastScrollIndex >= 0) abs(scrollTargetIndex - lastScrollIndex) else 0
+        if (lastScrollIndex == -1 || delta <= 1) {
+            // Instant scroll — prevents the stutter/jitter on D-pad left/right
+            rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = finalOffset)
+        } else {
+            // Larger jump — animate for smooth feel
+            rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = finalOffset)
         }
         lastScrollIndex = scrollTargetIndex
     }

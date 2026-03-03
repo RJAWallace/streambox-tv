@@ -154,8 +154,15 @@ fun WatchlistScreen(
                         }
                         Key.DirectionLeft -> {
                             if (!isSidebarFocused) {
-                                isSidebarFocused = true
-                                true
+                                // Only go to sidebar when at leftmost column
+                                if (focusedGridIndex % gridColumns == 0) {
+                                    isSidebarFocused = true
+                                    true
+                                } else {
+                                    // Move left within the grid
+                                    focusedGridIndex = (focusedGridIndex - 1).coerceAtLeast(0)
+                                    false // Let grid handle navigation
+                                }
                             } else {
                                 true // Consume to prevent focus leaving
                             }

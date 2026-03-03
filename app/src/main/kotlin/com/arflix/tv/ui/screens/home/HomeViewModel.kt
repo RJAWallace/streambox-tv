@@ -67,6 +67,8 @@ data class HomeUiState(
     // Transition state for animations
     val isHeroTransitioning: Boolean = false,
     val isAuthenticated: Boolean = false,
+    // CW check complete — prevents showing trending then scrolling to CW
+    val cwCheckComplete: Boolean = false,
     // Toast
     val toastMessage: String? = null,
     val toastType: ToastType = ToastType.INFO
@@ -320,6 +322,9 @@ class HomeViewModel @Inject constructor(
             } catch (e: Exception) {
                 System.err.println("HomeVM: preload CW cache failed: ${e.message}")
             }
+            // Mark CW check complete so HomeScreen can render immediately
+            // without showing trending first then scrolling up to CW
+            _uiState.value = _uiState.value.copy(cwCheckComplete = true)
         }
         loadHomeData()
         // Refresh Continue Watching from Supabase immediately (no Trakt auth needed)
@@ -1043,30 +1048,53 @@ class HomeViewModel @Inject constructor(
                 }
             }
 
-            // Only include entries where the most recent episode is in-progress.
-            // If the latest episode is completed, the show shouldn't appear in CW
-            // (it's fully caught up for now — next-episode logic is separate).
+            // Include both in-progress entries and completed TV episodes (as "up next").
+            // Movies are only shown if in-progress.
             val mapped = byShow.values.mapNotNull { entry ->
                 val progress = entry.progress.coerceIn(0f, 1f)
-                // Skip completed entries — only show if there's meaningful in-progress
-                if (progress >= threshold && progress > 0f) return@mapNotNull null
-                // Also skip entries with zero progress (never actually started)
+                val mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE
+
+                // Skip entries with zero progress (never actually started)
                 if (progress <= 0f && entry.position_seconds <= 0L) return@mapNotNull null
 
-                val mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE
-                ContinueWatchingItem(
-                    id = entry.show_tmdb_id,
-                    title = entry.title ?: return@mapNotNull null,
-                    mediaType = mediaType,
-                    progress = (progress * 100f).toInt().coerceIn(0, 100),
-                    resumePositionSeconds = entry.position_seconds.coerceAtLeast(0L),
-                    durationSeconds = entry.duration_seconds.coerceAtLeast(0L),
-                    season = entry.season,
-                    episode = entry.episode,
-                    episodeTitle = entry.episode_title,
-                    backdropPath = entry.backdrop_path,
-                    posterPath = entry.poster_path
-                )
+                // Completed entry: for TV shows, offer the next episode
+                if (progress >= threshold && progress > 0f) {
+                    if (mediaType == MediaType.TV && entry.season != null && entry.episode != null) {
+                        // Show "Play next episode" with the next episode number
+                        ContinueWatchingItem(
+                            id = entry.show_tmdb_id,
+                            title = entry.title ?: return@mapNotNull null,
+                            mediaType = mediaType,
+                            progress = 0,
+                            resumePositionSeconds = 0L,
+                            durationSeconds = 0L,
+                            season = entry.season,
+                            episode = entry.episode + 1,
+                            episodeTitle = null, // Will be enriched later
+                            backdropPath = entry.backdrop_path,
+                            posterPath = entry.poster_path,
+                            isUpNext = true
+                        )
+                    } else {
+                        // Completed movie — don't show in CW
+                        return@mapNotNull null
+                    }
+                } else {
+                    // In-progress entry — show as "Continue"
+                    ContinueWatchingItem(
+                        id = entry.show_tmdb_id,
+                        title = entry.title ?: return@mapNotNull null,
+                        mediaType = mediaType,
+                        progress = (progress * 100f).toInt().coerceIn(0, 100),
+                        resumePositionSeconds = entry.position_seconds.coerceAtLeast(0L),
+                        durationSeconds = entry.duration_seconds.coerceAtLeast(0L),
+                        season = entry.season,
+                        episode = entry.episode,
+                        episodeTitle = entry.episode_title,
+                        backdropPath = entry.backdrop_path,
+                        posterPath = entry.poster_path
+                    )
+                }
             }
             traktRepository.enrichContinueWatchingItems(mapped)
         } catch (_: Exception) {

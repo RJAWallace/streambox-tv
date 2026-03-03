@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -38,11 +37,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,6 +52,9 @@ import kotlinx.coroutines.delay
 /**
  * Next episode overlay shown at the end of an episode
  * Matches the webapp's "Up Next" modal design
+ *
+ * Key events are handled by PlayerScreen's onPreviewKeyEvent handler,
+ * which routes overlay-specific keys here via [externalFocusedButton].
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -69,13 +66,15 @@ fun NextEpisodeOverlay(
     episodeNumber: Int,
     episodeImage: String?,
     countdownSeconds: Int = 10,
+    externalFocusedButton: Int = 0, // Driven by PlayerScreen key handler
     onPlayNext: () -> Unit,
     onCancel: () -> Unit
 ) {
-    var focusedButton by remember(isVisible) { mutableIntStateOf(0) } // 0 = play, 1 = cancel
+    // Use externally-driven focus (from PlayerScreen onPreviewKeyEvent)
+    val focusedButton = externalFocusedButton
     var countdown by remember(isVisible) { mutableIntStateOf(countdownSeconds) }
     var progress by remember(isVisible) { mutableFloatStateOf(1f) }
-    
+
     // Countdown timer
     LaunchedEffect(isVisible) {
         if (isVisible) {
@@ -90,41 +89,14 @@ fun NextEpisodeOverlay(
             }
         }
     }
-    
+
     AnimatedVisibility(
         visible = isVisible,
         enter = fadeIn() + slideInHorizontally(initialOffsetX = { it }),
         exit = fadeOut() + slideOutHorizontally(targetOffsetX = { it })
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .onKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown) {
-                        when (event.key) {
-                            Key.Back, Key.Escape -> {
-                                onCancel()
-                                true
-                            }
-                            Key.DirectionLeft -> {
-                                if (focusedButton > 0) focusedButton--
-                                true
-                            }
-                            Key.DirectionRight -> {
-                                if (focusedButton < 1) focusedButton++
-                                true
-                            }
-                            Key.Enter, Key.DirectionCenter -> {
-                                when (focusedButton) {
-                                    0 -> onPlayNext()
-                                    1 -> onCancel()
-                                }
-                                true
-                            }
-                            else -> false
-                        }
-                    } else false
-                },
+            modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.BottomEnd
         ) {
             // Card positioned at bottom right
@@ -168,9 +140,9 @@ fun NextEpisodeOverlay(
                             color = TextSecondary
                         )
                     }
-                    
+
                     Spacer(modifier = Modifier.height(16.dp))
-                    
+
                     // Episode preview
                     Row(
                         verticalAlignment = Alignment.CenterVertically
@@ -204,7 +176,7 @@ fun NextEpisodeOverlay(
                                     )
                                 }
                             }
-                            
+
                             // Progress bar at bottom
                             Box(
                                 modifier = Modifier
@@ -226,9 +198,9 @@ fun NextEpisodeOverlay(
                                 )
                             }
                         }
-                        
+
                         Spacer(modifier = Modifier.width(16.dp))
-                        
+
                         // Episode info
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
@@ -251,9 +223,9 @@ fun NextEpisodeOverlay(
                             )
                         }
                     }
-                    
+
                     Spacer(modifier = Modifier.height(20.dp))
-                    
+
                     // Buttons
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -264,12 +236,12 @@ fun NextEpisodeOverlay(
                                 .weight(1f)
                                 .height(48.dp)
                                 .background(
-                                    if (focusedButton == 0) Pink else Color.White.copy(alpha = 0.1f),
+                                    if (focusedButton == 0) Pink else Color.White.copy(alpha = 0.15f),
                                     RoundedCornerShape(12.dp)
                                 )
                                 .border(
                                     width = if (focusedButton == 0) 0.dp else 1.dp,
-                                    color = Color.White.copy(alpha = 0.2f),
+                                    color = Color.White.copy(alpha = 0.3f),
                                     shape = RoundedCornerShape(12.dp)
                                 ),
                             contentAlignment = Alignment.Center
@@ -281,29 +253,29 @@ fun NextEpisodeOverlay(
                                 Icon(
                                     imageVector = Icons.Default.PlayArrow,
                                     contentDescription = null,
-                                    tint = if (focusedButton == 0) Color.White else TextSecondary,
+                                    tint = if (focusedButton == 0) Color.White else Color.White,
                                     modifier = Modifier.size(24.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "PLAY NOW",
                                     style = ArflixTypography.button,
-                                    color = if (focusedButton == 0) Color.White else TextSecondary
+                                    color = if (focusedButton == 0) Color.White else Color.White
                                 )
                             }
                         }
-                        
+
                         // Cancel button
                         Box(
                             modifier = Modifier
                                 .size(48.dp)
                                 .background(
-                                    if (focusedButton == 1) Color.White else Color.White.copy(alpha = 0.1f),
+                                    if (focusedButton == 1) Color.White else Color.White.copy(alpha = 0.15f),
                                     RoundedCornerShape(12.dp)
                                 )
                                 .border(
                                     width = if (focusedButton == 1) 0.dp else 1.dp,
-                                    color = Color.White.copy(alpha = 0.2f),
+                                    color = Color.White.copy(alpha = 0.3f),
                                     shape = RoundedCornerShape(12.dp)
                                 ),
                             contentAlignment = Alignment.Center
@@ -311,7 +283,7 @@ fun NextEpisodeOverlay(
                             Icon(
                                 imageVector = Icons.Default.Close,
                                 contentDescription = "Cancel",
-                                tint = if (focusedButton == 1) Color.Black else TextSecondary,
+                                tint = if (focusedButton == 1) Color.Black else Color.White,
                                 modifier = Modifier.size(24.dp)
                             )
                         }

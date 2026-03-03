@@ -253,14 +253,21 @@ fun HomeScreen(
     // Flag to defer focus reset until categories have been refreshed
     var pendingFocusResetOnResume by remember { mutableStateOf(false) }
 
+    // Use rememberSaveable to persist focus position across navigation (back from details page)
+    // Declared early so ON_RESUME handler can access it for CW reset.
+    val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isNavigatingToDetails = false
                 viewModel.refreshContinueWatchingOnly(forceRefresh = true)
-                // Don't reset focus on resume — pressing Back from Details should
-                // return to the previously focused position. Only the Home sidebar
-                // button should reset to CW top (handled in the sidebar click handler).
+                // For CW row only: reset scroll to left so the just-watched show
+                // (now at position 1) is immediately accessible. Other rows preserve position.
+                if (focusState.currentRowIndex == 0) {
+                    focusState.currentItemIndex = 0
+                    focusState.rowItemIndices[0] = 0
+                }
                 suppressSelectUntilMs = SystemClock.elapsedRealtime() + 300L
             }
         }
@@ -331,9 +338,6 @@ fun HomeScreen(
         )
     }
     val contentStartPadding = 12.dp
-
-    // Use rememberSaveable to persist focus position across navigation (back from details page)
-    val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
     val fastScrollThresholdMs = 650L
 
     // Track CW presence to adjust focus indices when CW row is dynamically inserted/removed.
@@ -1149,15 +1153,25 @@ private fun HomeRowsLayer(
         val halfHeight = maxHeight / 2
         val listState = rememberLazyListState()
         val targetIndex = currentRowIndex.coerceIn(0, (categories.size - 1).coerceAtLeast(0))
+        // Track whether user has navigated yet. First scroll should be instant
+        // (no animation) to prevent CW insertion from causing a visible scroll flash.
+        var userHasNavigated by remember { mutableStateOf(false) }
         LaunchedEffect(targetIndex) {
             if (categories.isEmpty()) return@LaunchedEffect
             val currentIndex = listState.firstVisibleItemIndex
             val currentOffset = listState.firstVisibleItemScrollOffset
             if (currentIndex == targetIndex && currentOffset == 0) return@LaunchedEffect
-            listState.animateScrollToItem(
-                index = targetIndex,
-                scrollOffset = 0
-            )
+            if (!userHasNavigated) {
+                // First time or CW insertion — snap instantly, no animation
+                listState.scrollToItem(index = targetIndex, scrollOffset = 0)
+                userHasNavigated = true
+            } else {
+                listState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
+            }
+        }
+        // Mark as user-navigated when focus changes from D-pad interaction
+        LaunchedEffect(currentRowIndex) {
+            if (currentRowIndex > 0) userHasNavigated = true
         }
         // Viewport is only the bottom 50%: selected row stays at same height, rows above disappear
         Box(

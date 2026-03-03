@@ -60,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
@@ -166,6 +167,7 @@ fun PlayerScreen(
 
     // Next episode overlay state
     var nextEpisodeOverlayTriggered by remember { mutableStateOf(false) }
+    var nextEpisodeOverlayFocusedButton by remember { mutableIntStateOf(0) } // 0 = play, 1 = cancel
 
     // Volume state
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -366,14 +368,14 @@ fun PlayerScreen(
         // The startup gate provides an additional buffering safety net.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                30_000,     // minBufferMs: 30s - keep filling buffer in background
-                240_000,    // maxBufferMs: 4 min deep buffer for no mid-stream buffering
-                500,        // bufferForPlaybackMs: 500ms (was 2s) - fastest STATE_READY transition
-                5_000       // bufferForPlaybackAfterRebufferMs: 5s (was 8s) - recover quickly
+                15_000,     // minBufferMs: 15s — faster recovery after seek
+                60_000,     // maxBufferMs: 60s — prevent OOM on TV devices (was 240s)
+                500,        // bufferForPlaybackMs: 500ms — fast startup
+                2_000       // bufferForPlaybackAfterRebufferMs: 2s — fast rebuffer recovery
             )
-            .setTargetBufferBytes(C.LENGTH_UNSET)
-            .setPrioritizeTimeOverSizeThresholds(true)
-            .setBackBuffer(20_000, true)
+            .setTargetBufferBytes(100 * 1024 * 1024) // 100MB hard cap — prevent OOM on TV
+            .setPrioritizeTimeOverSizeThresholds(false) // Respect byte limit
+            .setBackBuffer(10_000, true) // 10s back buffer (was 20s)
             .build()
 
         ExoPlayer.Builder(context)
@@ -611,6 +613,23 @@ fun PlayerScreen(
                     }
                 })
             }
+    }
+
+    // Helper: immediately save progress (called on pause and back)
+    val saveProgressNow: () -> Unit = {
+        if (hasPlaybackStarted) {
+            runCatching {
+                val safeDuration = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
+                val safePercent = if (safeDuration > 0L) {
+                    ((exoPlayer.currentPosition.toDouble() / safeDuration.toDouble()) * 100.0)
+                        .toInt().coerceIn(0, 100)
+                } else 0
+                viewModel.saveProgress(
+                    exoPlayer.currentPosition, safeDuration, safePercent,
+                    isPlaying = exoPlayer.isPlaying, playbackState = exoPlayer.playbackState
+                )
+            }
+        }
     }
 
     val queueControlsSeek: (Long) -> Unit = queueSeek@{ deltaMs ->
@@ -1002,10 +1021,16 @@ fun PlayerScreen(
                 val outroMs = uiState.outroStartMs
                 if (outroMs != null && currentPosition >= outroMs) {
                     nextEpisodeOverlayTriggered = true
+                    nextEpisodeOverlayFocusedButton = 0
                     viewModel.showNextEpisodeOverlay()
                 }
                 // Also update outro timing in case skip intervals loaded after initial fetch
                 viewModel.updateOutroFromIntervals()
+                // Fallback: if no outro data and duration is known, trigger overlay
+                // ~90 seconds before the end (approximate credits start)
+                if (uiState.outroStartMs == null && duration > 180_000L) {
+                    viewModel.setFallbackOutroMs(duration - 90_000L)
+                }
             }
             val rawDuration = exoPlayer.duration
             duration = if (rawDuration > 0L && rawDuration != C.TIME_UNSET) rawDuration else 0L
@@ -1258,6 +1283,40 @@ fun PlayerScreen(
             .focusable()
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
+                    // Handle next episode overlay — must intercept before player controls
+                    if (uiState.showNextEpisodeOverlay) {
+                        return@onPreviewKeyEvent when (event.key) {
+                            Key.DirectionLeft -> {
+                                if (nextEpisodeOverlayFocusedButton > 0) nextEpisodeOverlayFocusedButton = 0
+                                true
+                            }
+                            Key.DirectionRight -> {
+                                if (nextEpisodeOverlayFocusedButton < 1) nextEpisodeOverlayFocusedButton = 1
+                                true
+                            }
+                            Key.Enter, Key.DirectionCenter -> {
+                                if (nextEpisodeOverlayFocusedButton == 0) {
+                                    viewModel.dismissNextEpisodeOverlay()
+                                    val selected = uiState.selectedStream
+                                    onPlayNext(
+                                        seasonNumber ?: 1,
+                                        (episodeNumber ?: 1) + 1,
+                                        selected?.addonId?.takeIf { it.isNotBlank() },
+                                        selected?.source?.takeIf { it.isNotBlank() }
+                                    )
+                                } else {
+                                    viewModel.dismissNextEpisodeOverlay()
+                                }
+                                true
+                            }
+                            Key.Back, Key.Escape -> {
+                                viewModel.dismissNextEpisodeOverlay()
+                                true
+                            }
+                            else -> true // Consume all other keys while overlay is showing
+                        }
+                    }
+
                     // Handle error modal — must intercept before children consume D-pad
                     if (uiState.error != null) {
                         return@onPreviewKeyEvent when (event.key) {
@@ -1381,6 +1440,7 @@ fun PlayerScreen(
 
                     when (event.key) {
                         Key.Back, Key.Escape -> {
+                            saveProgressNow() // Save exact timestamp on exit
                             onBack()
                             true
                         }
@@ -1435,7 +1495,9 @@ fun PlayerScreen(
                         Key.Enter, Key.DirectionCenter -> {
                             if (!showControls) {
                                 // Show controls and toggle play/pause
-                                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                val wasPausing = exoPlayer.isPlaying
+                                if (wasPausing) exoPlayer.pause() else exoPlayer.play()
+                                if (wasPausing) saveProgressNow()
                                 showControls = true
                                 true
                             } else {
@@ -1444,7 +1506,9 @@ fun PlayerScreen(
                             }
                         }
                         Key.Spacebar -> {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            val wasPausing = exoPlayer.isPlaying
+                            if (wasPausing) exoPlayer.pause() else exoPlayer.play()
+                            if (wasPausing) saveProgressNow()
                             showControls = true
                             true
                         }
@@ -1592,6 +1656,7 @@ fun PlayerScreen(
                 episodeNumber = episodeNumber + 1,
                 episodeImage = uiState.nextEpisodeThumbnail,
                 countdownSeconds = 10,
+                externalFocusedButton = nextEpisodeOverlayFocusedButton,
                 onPlayNext = {
                     viewModel.dismissNextEpisodeOverlay()
                     val selected = uiState.selectedStream
@@ -1615,6 +1680,38 @@ fun PlayerScreen(
             exit = fadeOut()
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
+                // Top scrim gradient — ensures text is visible on light scenes
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(140.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Black.copy(alpha = 0.75f),
+                                    Color.Black.copy(alpha = 0.3f),
+                                    Color.Transparent
+                                )
+                            )
+                        )
+                )
+                // Bottom scrim gradient — ensures controls are visible on light scenes
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(220.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    Color.Black.copy(alpha = 0.3f),
+                                    Color.Black.copy(alpha = 0.75f)
+                                )
+                            )
+                        )
+                )
                 // Top info
                 Row(
                     modifier = Modifier
@@ -1661,18 +1758,32 @@ fun PlayerScreen(
                                 // Episode title would be shown here if available
                             }
                         }
-                        // Source info
+                        // Source info with quality tags
                         uiState.selectedStream?.let { stream ->
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 modifier = Modifier.padding(top = 4.dp)
                             ) {
-                                Text(
-                                    text = stream.quality,
-                                    style = ArflixTypography.caption.copy(fontSize = 12.sp),
-                                    color = Pink
-                                )
+                                // Parse quality tags from stream metadata
+                                val streamInfo = "${stream.quality} ${stream.source}".uppercase()
+                                val tags = remember(streamInfo) { parseQualityTags(streamInfo) }
+                                tags.forEach { tag ->
+                                    Box(
+                                        modifier = Modifier
+                                            .background(tag.color, RoundedCornerShape(4.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = tag.label,
+                                            style = ArflixTypography.caption.copy(
+                                                fontSize = 10.sp,
+                                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                            ),
+                                            color = Color.White
+                                        )
+                                    }
+                                }
                                 stream.sizeBytes?.let { size ->
                                     Text(
                                         text = "•",
@@ -2735,6 +2846,60 @@ private fun formatTime(ms: Long): String {
     } else {
         String.format("%02d:%02d", minutes, seconds)
     }
+}
+
+/**
+ * Quality tag for display — parsed from stream metadata.
+ */
+private data class QualityTag(val label: String, val color: Color)
+
+/**
+ * Parse quality tags from a stream's quality + title string.
+ * Returns colored pills for resolution, HDR, Dolby, Atmos, etc.
+ */
+private fun parseQualityTags(info: String): List<QualityTag> {
+    val tags = mutableListOf<QualityTag>()
+    // Resolution tags
+    when {
+        "4K" in info || "2160" in info -> tags.add(QualityTag("4K", Color(0xFFE53935)))
+        "1080" in info -> tags.add(QualityTag("1080p", Color(0xFF1E88E5)))
+        "720" in info -> tags.add(QualityTag("720p", Color(0xFF43A047)))
+        "480" in info -> tags.add(QualityTag("480p", Color(0xFF757575)))
+    }
+    // HDR tags
+    when {
+        "HDR10+" in info || "HDR10PLUS" in info -> tags.add(QualityTag("HDR10+", Color(0xFFFFA000)))
+        "HDR10" in info -> tags.add(QualityTag("HDR10", Color(0xFFFFA000)))
+        "HDR" in info -> tags.add(QualityTag("HDR", Color(0xFFFFA000)))
+    }
+    // Dolby Vision
+    if ("DV" in info || "DOLBY VISION" in info || "DOLBYVISION" in info || "DVHE" in info) {
+        tags.add(QualityTag("DV", Color(0xFF7B1FA2)))
+    }
+    // Audio tags
+    if ("ATMOS" in info) {
+        tags.add(QualityTag("Atmos", Color(0xFF0277BD)))
+    } else if ("TRUEHD" in info || "TRUE HD" in info) {
+        tags.add(QualityTag("TrueHD", Color(0xFF0277BD)))
+    } else if ("DTS-HD" in info || "DTSHD" in info || "DTS.HD" in info) {
+        tags.add(QualityTag("DTS-HD", Color(0xFF0277BD)))
+    } else if ("DDP" in info || "DD+" in info || "DOLBY DIGITAL+" in info || "E-AC-3" in info || "EAC3" in info) {
+        tags.add(QualityTag("DD+", Color(0xFF0277BD)))
+    } else if ("DD5.1" in info || "DOLBY DIGITAL" in info || "AC3" in info || "AC-3" in info) {
+        tags.add(QualityTag("DD", Color(0xFF0277BD)))
+    }
+    // Codec tags
+    if ("HEVC" in info || "H265" in info || "H.265" in info || "X265" in info) {
+        tags.add(QualityTag("HEVC", Color(0xFF546E7A)))
+    } else if ("AV1" in info) {
+        tags.add(QualityTag("AV1", Color(0xFF546E7A)))
+    }
+    // Fallback: if no resolution tag, just show the raw quality
+    if (tags.isEmpty()) {
+        val fallback = info.trim().take(10)
+        if (fallback.isNotEmpty()) tags.add(QualityTag(fallback, Color(0xFFE91E63)))
+    }
+    return tags
 }
 
 private fun formatFileSize(bytes: Long): String {

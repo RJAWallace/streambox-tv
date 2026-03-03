@@ -934,9 +934,42 @@ class DetailsViewModel @Inject constructor(
     }
 
     /**
-     * Resolve real IMDB ID from TMDB using external_ids endpoint
-     * This is required for addon stream resolution
+     * Mark all episodes in a season as watched (or unwatched).
+     * Called from the long-press season context menu.
      */
+    fun markSeasonWatched(season: Int, watched: Boolean) {
+        viewModelScope.launch {
+            try {
+                val episodesInSeason = _uiState.value.episodes.filter { it.seasonNumber == season }
+                for (ep in episodesInSeason) {
+                    if (ep.isWatched != watched) {
+                        if (watched) {
+                            traktRepository.markEpisodeWatched(currentMediaId, season, ep.episodeNumber)
+                            watchHistoryRepository.removeFromHistory(currentMediaId, season, ep.episodeNumber)
+                        } else {
+                            traktRepository.markEpisodeUnwatched(currentMediaId, season, ep.episodeNumber)
+                        }
+                    }
+                }
+                // Update local state
+                val updatedEpisodes = _uiState.value.episodes.map { ep ->
+                    if (ep.seasonNumber == season) ep.copy(isWatched = watched) else ep
+                }
+                _uiState.value = _uiState.value.copy(
+                    episodes = updatedEpisodes,
+                    toastMessage = if (watched) "Season $season marked as watched"
+                                   else "Season $season marked as unwatched",
+                    toastType = ToastType.SUCCESS
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = "Failed to update season: ${e.message}",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
     /**
      * Fetch season progress for a TV show
      * Returns Map<seasonNumber, Pair<watchedCount, totalCount>>

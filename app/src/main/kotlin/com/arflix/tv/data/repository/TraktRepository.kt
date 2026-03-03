@@ -2543,8 +2543,12 @@ data class ContinueWatchingItem(
         val resumeLabel = resumeSeconds.takeIf { it > 0L }?.let { formatResumeClock(it) }
 
         val subtitle = if (mediaType == MediaType.TV && season != null && episode != null) {
-            val base = "Continue S${season}.E${episode}"
-            if (!resumeLabel.isNullOrBlank()) "$base from $resumeLabel" else base
+            if (isUpNext) {
+                "Play next episode S${season}.E${episode}"
+            } else {
+                val base = "Continue S${season}.E${episode}"
+                if (!resumeLabel.isNullOrBlank()) "$base from $resumeLabel" else base
+            }
         } else {
             if (mediaType == MediaType.MOVIE) {
                 if (!resumeLabel.isNullOrBlank()) "Continue from $resumeLabel" else "Continue"

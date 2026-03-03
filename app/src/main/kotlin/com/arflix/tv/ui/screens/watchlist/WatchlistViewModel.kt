@@ -84,6 +84,14 @@ class WatchlistViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(isLoading = false)
                 }
             }
+
+            // Pull from cloud to pick up cross-device additions (movies, etc.)
+            // Runs after local load so user sees cached items instantly
+            try {
+                watchlistRepository.pullWatchlistFromCloud()
+                // pullWatchlistFromCloud clears cache if new items found,
+                // which triggers the StateFlow observer to update UI
+            } catch (_: Exception) {}
         }
     }
 
