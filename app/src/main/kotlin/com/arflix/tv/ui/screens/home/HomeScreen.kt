@@ -258,7 +258,9 @@ fun HomeScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 isNavigatingToDetails = false
                 viewModel.refreshContinueWatchingOnly(forceRefresh = true)
-                pendingFocusResetOnResume = true
+                // Don't reset focus on resume — pressing Back from Details should
+                // return to the previously focused position. Only the Home sidebar
+                // button should reset to CW top (handled in the sidebar click handler).
                 suppressSelectUntilMs = SystemClock.elapsedRealtime() + 300L
             }
         }
@@ -363,17 +365,8 @@ fun HomeScreen(
         hadContinueWatchingAtZero = hasCW
     }
 
-    // Reset focus to CW row AFTER categories have been refreshed (not immediately on resume).
-    // This fixes the race condition where sync focus reset ran before async CW refresh completed.
-    LaunchedEffect(displayCategories, pendingFocusResetOnResume) {
-        if (pendingFocusResetOnResume && displayCategories.isNotEmpty()
-            && displayCategories[0].id == "continue_watching"
-        ) {
-            focusState.currentRowIndex = 0
-            focusState.currentItemIndex = 0
-            pendingFocusResetOnResume = false
-        }
-    }
+    // Focus-to-CW reset is now only triggered by the Home sidebar button click,
+    // not on every resume. This preserves scroll position when pressing Back.
 
     // Context menu state (Menu button only, no long-press)
     var showContextMenu by remember { mutableStateOf(false) }
@@ -1066,7 +1059,11 @@ private fun HomeInputLayer(
                                     val itemIndex = if (hasProfile) focusState.sidebarFocusIndex - 1 else focusState.sidebarFocusIndex
                                     when (SidebarItem.entries[itemIndex]) {
                                         SidebarItem.SEARCH -> onNavigateToSearch()
-                                        SidebarItem.HOME -> { }
+                                        SidebarItem.HOME -> {
+                                            // Reset focus to CW row at top
+                                            focusState.currentRowIndex = 0
+                                            focusState.currentItemIndex = 0
+                                        }
                                         SidebarItem.WATCHLIST -> onNavigateToWatchlist()
                                         SidebarItem.TV -> onNavigateToTv()
                                         SidebarItem.SETTINGS -> onNavigateToSettings()
@@ -1099,7 +1096,11 @@ private fun HomeInputLayer(
             onItemSelected = { item ->
                 when (item) {
                     SidebarItem.SEARCH -> onNavigateToSearch()
-                    SidebarItem.HOME -> { }
+                    SidebarItem.HOME -> {
+                        // Reset focus to CW row at top
+                        focusState.currentRowIndex = 0
+                        focusState.currentItemIndex = 0
+                    }
                     SidebarItem.WATCHLIST -> onNavigateToWatchlist()
                     SidebarItem.TV -> onNavigateToTv()
                     SidebarItem.SETTINGS -> onNavigateToSettings()
@@ -1425,6 +1426,10 @@ private fun ContentRow(
             lastScrollIndex = -1
         }
     }
+    // Peek offset: when not at the first item, shift left slightly to show a
+    // sliver of the previous card (Netflix / HBO-style scroll indicator).
+    val peekOffsetPx = remember(density) { with(density) { 35.dp.roundToPx() } }
+
     LaunchedEffect(scrollTargetIndex, isCurrentRow, focusedItemIndex) {
         if (!isCurrentRow || scrollTargetIndex < 0) return@LaunchedEffect
 
@@ -1444,16 +1449,20 @@ private fun ContentRow(
             return@LaunchedEffect
         }
 
-        if (lastScrollIndex == scrollTargetIndex && extraOffset == 0) return@LaunchedEffect
+        // Apply peek offset: show a sliver of the previous card when scrolled past first item
+        val peek = if (scrollTargetIndex > 0 && extraOffset == 0) -peekOffsetPx else 0
+        val finalOffset = extraOffset + peek
+
+        if (lastScrollIndex == scrollTargetIndex && finalOffset == 0 && peek == 0) return@LaunchedEffect
         if (lastScrollIndex == -1) {
             // First time we jump directly to the correct position (no animation)
-            rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+            rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = finalOffset)
             lastScrollIndex = scrollTargetIndex
             return@LaunchedEffect
         }
 
         // Always use a smooth animated scroll for D‑pad navigation between items
-        rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+        rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = finalOffset)
         lastScrollIndex = scrollTargetIndex
     }
 

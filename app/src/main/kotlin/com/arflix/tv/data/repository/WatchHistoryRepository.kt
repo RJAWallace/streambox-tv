@@ -92,6 +92,10 @@ class WatchHistoryRepository @Inject constructor(
                 progress = progress,
                 duration_seconds = duration,
                 position_seconds = position,
+                // Explicitly set updated_at so upserts refresh the timestamp.
+                // Without this, Supabase may keep the original insert timestamp
+                // on updates, causing CW ordering to show old episodes.
+                updated_at = Instant.now().toString(),
                 source = profileHistorySource("arvio"),
                 stream_key = streamKey,
                 stream_addon_id = streamAddonId,

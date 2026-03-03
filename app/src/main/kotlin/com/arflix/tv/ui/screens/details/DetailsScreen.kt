@@ -544,8 +544,11 @@ fun DetailsScreen(
             }
     ) {
         // Main content - full screen with sidebar overlay (same as HomeScreen)
-        if (uiState.isLoading || uiState.item == null) {
-            // Use skeleton loader for better UX
+        if (uiState.isLoading || uiState.item == null ||
+            (mediaType == MediaType.TV && uiState.episodes.isEmpty() && uiState.totalSeasons > 0)
+        ) {
+            // Use skeleton loader for better UX — for TV shows, keep showing
+            // until episodes are loaded so the page doesn't flash empty then populate
             SkeletonDetailsPage(
                 isTV = mediaType == MediaType.TV,
                 modifier = Modifier.fillMaxSize()

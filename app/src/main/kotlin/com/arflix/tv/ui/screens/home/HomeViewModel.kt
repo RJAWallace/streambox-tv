@@ -514,15 +514,18 @@ class HomeViewModel @Inject constructor(
                         }
                         .associateBy { it.id }
 
+                    // Only show categories that appear in the user's saved catalog list.
+                    // This ensures hidden/removed preinstalled catalogs never flash on screen.
+                    val allowedCatalogIds = savedCatalogs.map { it.id }.toSet()
                     val resolved = mutableListOf<Category>()
                     if (preinstalled.isNotEmpty()) {
                         resolved.addAll(preinstalled)
                     } else if (baseCategories.isNotEmpty()) {
-                        resolved.addAll(baseCategories)
+                        resolved.addAll(baseCategories.filter { allowedCatalogIds.contains(it.id) })
                     } else if (currentBaseCategories.isNotEmpty()) {
-                        resolved.addAll(currentBaseCategories)
+                        resolved.addAll(currentBaseCategories.filter { allowedCatalogIds.contains(it.id) })
                     } else if (lastResolvedBaseCategories.isNotEmpty()) {
-                        resolved.addAll(lastResolvedBaseCategories)
+                        resolved.addAll(lastResolvedBaseCategories.filter { allowedCatalogIds.contains(it.id) })
                     }
                     customCatalogConfigs.forEach { cfg ->
                         val stickyCategory = stickyCustomById[cfg.id] ?: return@forEach
@@ -665,7 +668,17 @@ class HomeViewModel @Inject constructor(
         customCatalogsJob = viewModelScope.launch(networkDispatcher) {
             delay(if (isLowRamDevice) 1800L else 700L)
             val customCatalogs = savedCatalogs.filter { cfg -> isCustomCatalogConfig(cfg) }
-            if (customCatalogs.isEmpty()) return@launch
+            if (customCatalogs.isEmpty()) {
+                // Even with no custom catalogs, re-publish to remove any stale categories
+                // from previous loads that are no longer in savedCatalogs (e.g. hidden preinstalled).
+                val allowedIds = savedCatalogs.map { it.id }.toSet()
+                val currentCategories = _uiState.value.categories
+                val filtered = currentCategories.filter { it.id == "continue_watching" || allowedIds.contains(it.id) }
+                if (filtered.size < currentCategories.size) {
+                    _uiState.value = _uiState.value.copy(categories = filtered)
+                }
+                return@launch
+            }
             val customIds = customCatalogs.map { it.id }.toSet()
             val existingCustomById = _uiState.value.categories
                 .filter { category -> customIds.contains(category.id) && category.items.isNotEmpty() }
@@ -1012,21 +1025,40 @@ class HomeViewModel @Inject constructor(
 
     private suspend fun loadContinueWatchingFromHistory(): List<ContinueWatchingItem> {
         return try {
-            val entries = watchHistoryRepository.getContinueWatching()
-            if (entries.isEmpty()) return emptyList()
-            // Deduplicate by show/movie (not by exact episode).
-            // Entries are sorted by updated_at desc so the first entry for each show
-            // is the most recently watched episode. This ensures that if the user
-            // watched S1E1 then S3E1, only S3E1 (most recent) appears in CW.
-            val mapped = entries.distinctBy { entry ->
-                "${entry.media_type}:${entry.show_tmdb_id}"
-            }.mapNotNull { entry ->
+            // Use full watch history (not just in-progress) to find the most recently
+            // touched episode per show. getContinueWatching() only returns in-progress
+            // entries, so if the user's latest episode is completed, it falls back to an
+            // older in-progress one (wrong order). By using getWatchHistory() we ensure
+            // the most recent episode per show is always used.
+            val allEntries = watchHistoryRepository.getWatchHistory()
+            if (allEntries.isEmpty()) return emptyList()
+
+            val threshold = Constants.WATCHED_THRESHOLD / 100f
+            // Group by show, pick the most recent entry per show (already sorted by updated_at desc).
+            val byShow = LinkedHashMap<String, com.arflix.tv.data.repository.WatchHistoryEntry>()
+            for (entry in allEntries) {
+                val key = "${entry.media_type}:${entry.show_tmdb_id}"
+                if (!byShow.containsKey(key)) {
+                    byShow[key] = entry
+                }
+            }
+
+            // Only include entries where the most recent episode is in-progress.
+            // If the latest episode is completed, the show shouldn't appear in CW
+            // (it's fully caught up for now — next-episode logic is separate).
+            val mapped = byShow.values.mapNotNull { entry ->
+                val progress = entry.progress.coerceIn(0f, 1f)
+                // Skip completed entries — only show if there's meaningful in-progress
+                if (progress >= threshold && progress > 0f) return@mapNotNull null
+                // Also skip entries with zero progress (never actually started)
+                if (progress <= 0f && entry.position_seconds <= 0L) return@mapNotNull null
+
                 val mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE
                 ContinueWatchingItem(
                     id = entry.show_tmdb_id,
                     title = entry.title ?: return@mapNotNull null,
                     mediaType = mediaType,
-                    progress = (entry.progress * 100f).toInt().coerceIn(0, 100),
+                    progress = (progress * 100f).toInt().coerceIn(0, 100),
                     resumePositionSeconds = entry.position_seconds.coerceAtLeast(0L),
                     durationSeconds = entry.duration_seconds.coerceAtLeast(0L),
                     season = entry.season,
@@ -1047,7 +1079,8 @@ class HomeViewModel @Inject constructor(
     ): List<ContinueWatchingItem> {
         if (items.isEmpty()) return emptyList()
         return try {
-            val historyEntries = watchHistoryRepository.getContinueWatching()
+            // Use full history (not just in-progress) to match the most recent episode per show
+            val historyEntries = watchHistoryRepository.getWatchHistory()
             if (historyEntries.isEmpty()) return items
 
             val sortedHistory = historyEntries.sortedByDescending { it.updated_at ?: it.paused_at.orEmpty() }

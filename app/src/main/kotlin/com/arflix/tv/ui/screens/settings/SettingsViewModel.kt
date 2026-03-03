@@ -601,11 +601,16 @@ class SettingsViewModel @Inject constructor(
 
     private fun setAutoPlayMinQuality(value: String) {
         val normalized = normalizeAutoPlayMinQuality(value)
+        // Update UI immediately so the user sees the change
+        _uiState.value = _uiState.value.copy(autoPlayMinQuality = normalized)
         viewModelScope.launch {
-            context.settingsDataStore.edit { prefs ->
-                prefs[autoPlayMinQualityKey()] = normalized
+            // Use NonCancellable so the DataStore write completes even if the user
+            // navigates away and the ViewModel scope is cancelled.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                context.settingsDataStore.edit { prefs ->
+                    prefs[autoPlayMinQualityKey()] = normalized
+                }
             }
-            _uiState.value = _uiState.value.copy(autoPlayMinQuality = normalized)
             // Device-local setting — do NOT sync to cloud
         }
     }
@@ -1474,7 +1479,7 @@ class SettingsViewModel @Inject constructor(
                             prefs[frameRateMatchingModeKeyFor(profileId)] = normalizeFrameRateMode(state.frameRateMatchingMode)
                             prefs[autoPlayNextKeyFor(profileId)] = state.autoPlayNext
                             prefs[autoPlaySingleSourceKeyFor(profileId)] = state.autoPlaySingleSource
-                            prefs[autoPlayMinQualityKeyFor(profileId)] = normalizeAutoPlayMinQuality(state.autoPlayMinQuality)
+                            // Skip autoPlayMinQuality — it's device-local, not synced from cloud
                             prefs[includeSpecialsKeyFor(profileId)] = state.includeSpecials
                         }
                     }
@@ -1487,7 +1492,7 @@ class SettingsViewModel @Inject constructor(
                     prefs[frameRateMatchingModeKeyFor(activeProfileId)] = fallbackFrameRateMatchingMode
                     prefs[autoPlayNextKeyFor(activeProfileId)] = fallbackAutoPlayNext
                     prefs[autoPlaySingleSourceKeyFor(activeProfileId)] = fallbackAutoPlaySingleSource
-                    prefs[autoPlayMinQualityKeyFor(activeProfileId)] = fallbackAutoPlayMinQuality
+                    // Skip autoPlayMinQuality — it's device-local, not synced from cloud
                     prefs[includeSpecialsKeyFor(activeProfileId)] = fallbackIncludeSpecials
                 }
             }
