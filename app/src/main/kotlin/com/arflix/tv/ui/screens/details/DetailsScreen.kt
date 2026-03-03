@@ -273,10 +273,14 @@ fun DetailsScreen(
         }
     }
 
-    // Sync seasonIndex with initialSeasonIndex from ViewModel
+    // Sync seasonIndex with initialSeasonIndex from ViewModel.
+    // Also auto-load the correct season's episodes when the target season differs
+    // from the currently loaded season (e.g., resume info resolves to S7 but S1 was loaded).
     LaunchedEffect(uiState.initialSeasonIndex) {
-        if (uiState.initialSeasonIndex > 0) {
-            seasonIndex = uiState.initialSeasonIndex
+        seasonIndex = uiState.initialSeasonIndex
+        val targetSeason = uiState.initialSeasonIndex + 1
+        if (targetSeason != uiState.currentSeason && uiState.episodes.isNotEmpty()) {
+            viewModel.loadSeason(targetSeason)
         }
     }
 

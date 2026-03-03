@@ -560,11 +560,11 @@ class HomeViewModel @Inject constructor(
                     categories.add(0, continueWatchingCategory)
                 } else {
                     // Preserve Continue Watching that refreshContinueWatchingOnly() may have
-                    // already added while we were loading categories. Without this, the
-                    // state overwrite at line below would discard CW data.
+                    // already added (or placeholder CW from setPreloadedData) while we were
+                    // loading categories. Including placeholders keeps CW visible at index 0
+                    // until real data arrives, preventing focus index shifts that crash the app.
                     val existingCW = _uiState.value.categories.firstOrNull {
-                        it.id == "continue_watching" && it.items.isNotEmpty() &&
-                            it.items.none { item -> item.isPlaceholder }
+                        it.id == "continue_watching" && it.items.isNotEmpty()
                     }
                     if (existingCW != null) {
                         categories.add(0, existingCW)
@@ -926,7 +926,7 @@ class HomeViewModel @Inject constructor(
         loadHomeData()
     }
 
-    fun refreshContinueWatchingOnly() {
+    fun refreshContinueWatchingOnly(forceRefresh: Boolean = false) {
         // Don't cancel an in-progress Trakt fetch - restarting a fetch that takes
         // 10+ seconds (424 watched shows, 41 filtered, 50 progress API calls) wastes
         // time and causes Continue Watching to never appear. Multiple callers
@@ -943,8 +943,9 @@ class HomeViewModel @Inject constructor(
                 val existingContinueWatching = startCategories.getOrNull(continueWatchingIndexAtStart)
                 val hasPlaceholders = existingContinueWatching?.items?.any { it.isPlaceholder } == true
 
-                // Allow refresh if we have placeholders (need to replace them), otherwise throttle
-                if (!hasPlaceholders && now - lastContinueWatchingUpdateMs < CONTINUE_WATCHING_REFRESH_MS) {
+                // Allow refresh if we have placeholders (need to replace them),
+                // force-refresh on resume (ensures latest CW data after playing), otherwise throttle
+                if (!forceRefresh && !hasPlaceholders && now - lastContinueWatchingUpdateMs < CONTINUE_WATCHING_REFRESH_MS) {
                     return@launch
                 }
 
@@ -1013,8 +1014,12 @@ class HomeViewModel @Inject constructor(
         return try {
             val entries = watchHistoryRepository.getContinueWatching()
             if (entries.isEmpty()) return emptyList()
+            // Deduplicate by show/movie (not by exact episode).
+            // Entries are sorted by updated_at desc so the first entry for each show
+            // is the most recently watched episode. This ensures that if the user
+            // watched S1E1 then S3E1, only S3E1 (most recent) appears in CW.
             val mapped = entries.distinctBy { entry ->
-                "${entry.media_type}:${entry.show_tmdb_id}:${entry.season ?: -1}:${entry.episode ?: -1}"
+                "${entry.media_type}:${entry.show_tmdb_id}"
             }.mapNotNull { entry ->
                 val mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE
                 ContinueWatchingItem(

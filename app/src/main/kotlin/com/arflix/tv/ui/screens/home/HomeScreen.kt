@@ -257,7 +257,7 @@ fun HomeScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isNavigatingToDetails = false
-                viewModel.refreshContinueWatchingOnly()
+                viewModel.refreshContinueWatchingOnly(forceRefresh = true)
                 pendingFocusResetOnResume = true
                 suppressSelectUntilMs = SystemClock.elapsedRealtime() + 300L
             }
@@ -333,6 +333,35 @@ fun HomeScreen(
     // Use rememberSaveable to persist focus position across navigation (back from details page)
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
     val fastScrollThresholdMs = 650L
+
+    // Track CW presence to adjust focus indices when CW row is dynamically inserted/removed.
+    // Without this, async CW loading can shift all category indices and cause focus misalignment
+    // or out-of-bounds crashes when the user navigates up/down.
+    var hadContinueWatchingAtZero by remember {
+        mutableStateOf(displayCategories.firstOrNull()?.id == "continue_watching")
+    }
+    LaunchedEffect(displayCategories) {
+        val hasCW = displayCategories.firstOrNull()?.id == "continue_watching"
+        if (hasCW && !hadContinueWatchingAtZero && !pendingFocusResetOnResume) {
+            // CW was just inserted at index 0 — shift focus down to keep viewing same content
+            focusState.currentRowIndex = (focusState.currentRowIndex + 1)
+                .coerceAtMost((displayCategories.size - 1).coerceAtLeast(0))
+            val shifted = focusState.rowItemIndices.entries.associate { (k, v) -> (k + 1) to v }
+            focusState.rowItemIndices.clear()
+            focusState.rowItemIndices.putAll(shifted)
+        } else if (!hasCW && hadContinueWatchingAtZero) {
+            // CW was removed from index 0 — shift focus up to keep viewing same content
+            if (focusState.currentRowIndex > 0) {
+                focusState.currentRowIndex--
+            }
+            val shifted = focusState.rowItemIndices.entries
+                .filter { it.key > 0 }
+                .associate { (k, v) -> (k - 1) to v }
+            focusState.rowItemIndices.clear()
+            focusState.rowItemIndices.putAll(shifted)
+        }
+        hadContinueWatchingAtZero = hasCW
+    }
 
     // Reset focus to CW row AFTER categories have been refreshed (not immediately on resume).
     // This fixes the race condition where sync focus reset ran before async CW refresh completed.
@@ -1120,6 +1149,7 @@ private fun HomeRowsLayer(
         val listState = rememberLazyListState()
         val targetIndex = currentRowIndex.coerceIn(0, (categories.size - 1).coerceAtLeast(0))
         LaunchedEffect(targetIndex) {
+            if (categories.isEmpty()) return@LaunchedEffect
             val currentIndex = listState.firstVisibleItemIndex
             val currentOffset = listState.firstVisibleItemScrollOffset
             if (currentIndex == targetIndex && currentOffset == 0) return@LaunchedEffect
