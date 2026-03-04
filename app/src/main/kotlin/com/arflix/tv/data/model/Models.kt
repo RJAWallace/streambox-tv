@@ -43,7 +43,9 @@ data class MediaItem(
     // Popularity score from TMDB (higher = more mainstream content)
     val popularity: Float = 0f,
     // Placeholder card - shows skeleton loading animation
-    val isPlaceholder: Boolean = false
+    val isPlaceholder: Boolean = false,
+    // Resume position for Continue Watching items (milliseconds)
+    val resumePositionMs: Long = 0L
 ) : Serializable
 
 enum class MediaType {

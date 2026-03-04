@@ -1767,7 +1767,8 @@ fun PlayerScreen(
                             ) {
                                 // Parse quality tags from stream metadata
                                 val streamInfo = "${stream.quality} ${stream.source}".uppercase()
-                                val tags = remember(streamInfo) { parseQualityTags(streamInfo) }
+                                val streamCached = stream.behaviorHints?.cached == true
+                                val tags = remember(streamInfo, streamCached) { parseQualityTags(streamInfo, streamCached) }
                                 tags.forEach { tag ->
                                     Box(
                                         modifier = Modifier
@@ -2857,7 +2858,7 @@ private data class QualityTag(val label: String, val color: Color)
  * Parse quality tags from a stream's quality + title string.
  * Returns colored pills for resolution, HDR, Dolby, Atmos, etc.
  */
-private fun parseQualityTags(info: String): List<QualityTag> {
+private fun parseQualityTags(info: String, isCached: Boolean = false): List<QualityTag> {
     val tags = mutableListOf<QualityTag>()
     // Resolution tags
     when {
@@ -2865,6 +2866,10 @@ private fun parseQualityTags(info: String): List<QualityTag> {
         "1080" in info -> tags.add(QualityTag("1080p", Color(0xFF1E88E5)))
         "720" in info -> tags.add(QualityTag("720p", Color(0xFF43A047)))
         "480" in info -> tags.add(QualityTag("480p", Color(0xFF757575)))
+    }
+    // Blu-ray tag
+    if ("BLURAY" in info || "BLU-RAY" in info || "BDREMUX" in info || "BDRIP" in info || "REMUX" in info) {
+        tags.add(QualityTag("Blu-ray", Color(0xFF1565C0)))
     }
     // HDR tags
     when {
@@ -2893,6 +2898,10 @@ private fun parseQualityTags(info: String): List<QualityTag> {
         tags.add(QualityTag("HEVC", Color(0xFF546E7A)))
     } else if ("AV1" in info) {
         tags.add(QualityTag("AV1", Color(0xFF546E7A)))
+    }
+    // Real-Debrid cached tag
+    if (isCached) {
+        tags.add(QualityTag("RD", Color(0xFF2E7D32)))
     }
     // Fallback: if no resolution tag, just show the raw quality
     if (tags.isEmpty()) {

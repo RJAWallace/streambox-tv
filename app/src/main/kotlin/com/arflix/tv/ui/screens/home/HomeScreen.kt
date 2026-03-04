@@ -216,6 +216,7 @@ fun HomeScreen(
     preloadedLogoCache: Map<String, String> = emptyMap(),
     currentProfile: com.arflix.tv.data.model.Profile? = null,
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit = { _, _, _, _ -> },
+    onNavigateToPlayer: (MediaType, Int, Int?, Int?, Long?) -> Unit = { _, _, _, _, _ -> },
     onNavigateToSearch: () -> Unit = {},
     onNavigateToWatchlist: () -> Unit = {},
     onNavigateToTv: () -> Unit = {},
@@ -518,6 +519,10 @@ fun HomeScreen(
             onNavigateToDetails = { mediaType, mediaId, season, episode ->
                 isNavigatingToDetails = true
                 onNavigateToDetails(mediaType, mediaId, season, episode)
+            },
+            onNavigateToPlayer = { mediaType, mediaId, season, episode, startPositionMs ->
+                isNavigatingToDetails = true
+                onNavigateToPlayer(mediaType, mediaId, season, episode, startPositionMs)
             },
             onNavigateToSearch = onNavigateToSearch,
             onNavigateToWatchlist = onNavigateToWatchlist,
@@ -910,6 +915,7 @@ private fun HomeInputLayer(
     isContextMenuOpen: Boolean,
     currentProfile: com.arflix.tv.data.model.Profile?,
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit,
+    onNavigateToPlayer: (MediaType, Int, Int?, Int?, Long?) -> Unit,
     onNavigateToSearch: () -> Unit,
     onNavigateToWatchlist: () -> Unit,
     onNavigateToTv: () -> Unit,
@@ -1064,8 +1070,9 @@ private fun HomeInputLayer(
                                     when (SidebarItem.entries[itemIndex]) {
                                         SidebarItem.SEARCH -> onNavigateToSearch()
                                         SidebarItem.HOME -> {
-                                            // Reset focus to CW row at top
-                                            focusState.currentRowIndex = 0
+                                            // Find CW row dynamically (may not be index 0 if CW hasn't loaded)
+                                            val cwIndex = categories.indexOfFirst { it.id == "continue_watching" }
+                                            focusState.currentRowIndex = if (cwIndex >= 0) cwIndex else 0
                                             focusState.currentItemIndex = 0
                                         }
                                         SidebarItem.WATCHLIST -> onNavigateToWatchlist()
@@ -1080,7 +1087,18 @@ private fun HomeInputLayer(
                                     focusState.currentItemIndex
                                 )
                                 currentItem?.let { item ->
-                                    onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
+                                    val currentCategory = categories.getOrNull(focusState.currentRowIndex)
+                                    if (currentCategory?.id == "continue_watching") {
+                                        // CW auto-play: navigate directly to player with resume position
+                                        onNavigateToPlayer(
+                                            item.mediaType, item.id,
+                                            item.nextEpisode?.seasonNumber,
+                                            item.nextEpisode?.episodeNumber,
+                                            item.resumePositionMs.takeIf { ms -> ms > 0L }
+                                        )
+                                    } else {
+                                        onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
+                                    }
                                 }
                             }
                             true
@@ -1101,8 +1119,9 @@ private fun HomeInputLayer(
                 when (item) {
                     SidebarItem.SEARCH -> onNavigateToSearch()
                     SidebarItem.HOME -> {
-                        // Reset focus to CW row at top
-                        focusState.currentRowIndex = 0
+                        // Find CW row dynamically (may not be index 0 if CW hasn't loaded)
+                        val cwIndex = categories.indexOfFirst { it.id == "continue_watching" }
+                        focusState.currentRowIndex = if (cwIndex >= 0) cwIndex else 0
                         focusState.currentItemIndex = 0
                     }
                     SidebarItem.WATCHLIST -> onNavigateToWatchlist()
@@ -1119,7 +1138,19 @@ private fun HomeInputLayer(
             contentStartPadding = contentStartPadding,
             fastScrollThresholdMs = fastScrollThresholdMs,
             usePosterCards = usePosterCards,
-            onItemClick = { item -> onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber) }
+            onItemClick = { item ->
+                val clickedCategory = categories.getOrNull(focusState.currentRowIndex)
+                if (clickedCategory?.id == "continue_watching") {
+                    onNavigateToPlayer(
+                        item.mediaType, item.id,
+                        item.nextEpisode?.seasonNumber,
+                        item.nextEpisode?.episodeNumber,
+                        item.resumePositionMs.takeIf { ms -> ms > 0L }
+                    )
+                } else {
+                    onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
+                }
+            }
         )
     }
 }

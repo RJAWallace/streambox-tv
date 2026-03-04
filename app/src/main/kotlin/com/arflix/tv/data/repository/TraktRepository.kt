@@ -2581,7 +2581,8 @@ data class ContinueWatchingItem(
             backdrop = backdropPath,
             badge = null,
             budget = budget,
-            nextEpisode = nextEp
+            nextEpisode = nextEp,
+            resumePositionMs = resumeSeconds * 1000L
         )
     }
 }

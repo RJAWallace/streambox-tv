@@ -430,8 +430,32 @@ class WatchlistRepository @Inject constructor(
             }
             if (added > 0) {
                 saveWatchlist(localItems)
-                clearWatchlistCache() // Force reload to enrich from TMDB
-                System.err.println("[WATCHLIST-SYNC] Pulled $added items from cloud")
+                // Enrich ONLY new items incrementally (don't clear entire cache)
+                val newCloudItems = cloudItems.filter { record ->
+                    "${record.tmdbId}:${record.mediaType}" !in localKeys
+                }
+                val enrichedNew = coroutineScope {
+                    newCloudItems.map { record ->
+                        async {
+                            tmdbSemaphore.withPermit {
+                                enrichWatchlistItem(LocalWatchlistItem(
+                                    tmdbId = record.tmdbId,
+                                    mediaType = record.mediaType,
+                                    title = "",
+                                    addedAt = System.currentTimeMillis()
+                                ))
+                            }
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+                if (enrichedNew.isNotEmpty()) {
+                    cacheMutex.withLock {
+                        itemsCache.addAll(enrichedNew)
+                        enrichedNew.forEach { keyCache.add(cacheKey(it.mediaType, it.id)) }
+                        _watchlistItems.value = itemsCache.toList()
+                    }
+                }
+                System.err.println("[WATCHLIST-SYNC] Pulled $added items from cloud (enriched ${enrichedNew.size})")
             }
         } catch (e: Exception) {
             System.err.println("[WATCHLIST-SYNC] Failed to pull from cloud: ${e.message}")

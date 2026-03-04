@@ -126,6 +126,15 @@ fun AppNavigation(
                 onNavigateToDetails = { mediaType, mediaId, initialSeason, initialEpisode ->
                     navController.navigate(Screen.Details.createRoute(mediaType, mediaId, initialSeason, initialEpisode))
                 },
+                onNavigateToPlayer = { mediaType, mediaId, season, episode, startPositionMs ->
+                    navController.navigate(Screen.Player.createRoute(
+                        mediaType = mediaType,
+                        mediaId = mediaId,
+                        seasonNumber = season,
+                        episodeNumber = episode,
+                        startPositionMs = startPositionMs
+                    ))
+                },
                 onNavigateToSearch = {
                     navigateTopLevel(Screen.Search.route)
                 },

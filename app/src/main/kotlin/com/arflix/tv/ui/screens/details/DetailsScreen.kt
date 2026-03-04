@@ -515,6 +515,7 @@ fun DetailsScreen(
                                     }
                                 }
                                 FocusSection.SEASONS -> {
+                                    episodeIndex = 0  // Reset to first episode when changing season
                                     viewModel.loadSeason(seasonIndex + 1)
                                 }
                                 FocusSection.CAST -> {
@@ -1529,16 +1530,21 @@ private fun HomeStyleRowAutoScroll(
     itemSpacing: androidx.compose.ui.unit.Dp,
     initialScrollIndex: Int = 0
 ) {
-    // Scroll to target episode whenever initialScrollIndex changes (e.g., season switch).
-    // Keyed on initialScrollIndex so it re-triggers correctly, not just once.
-    LaunchedEffect(initialScrollIndex) {
-        if (initialScrollIndex > 0 && totalItems > 0) {
-            rowState.scrollToItem(initialScrollIndex.coerceAtMost((totalItems - 1).coerceAtLeast(0)))
-        }
-    }
-
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
+
+    // Scroll to target episode whenever initialScrollIndex changes (e.g., season switch).
+    val peekOffsetPxInit = remember(density) { with(density) { 35.dp.roundToPx() } }
+    LaunchedEffect(initialScrollIndex) {
+        if (initialScrollIndex > 0 && totalItems > 0) {
+            val index = initialScrollIndex.coerceAtMost((totalItems - 1).coerceAtLeast(0))
+            // Apply peek offset so previous item sliver is visible
+            rowState.scrollToItem(index, scrollOffset = -peekOffsetPxInit)
+        } else if (initialScrollIndex == 0) {
+            // Reset to start (e.g., season change)
+            rowState.scrollToItem(0, scrollOffset = 0)
+        }
+    }
     val availableWidthDp = configuration.screenWidthDp.dp - 56.dp - 12.dp
     val fallbackItemsPerPage = remember(configuration, density, itemWidth, itemSpacing) {
         val availablePx = with(density) { availableWidthDp.coerceAtLeast(1.dp).roundToPx() }

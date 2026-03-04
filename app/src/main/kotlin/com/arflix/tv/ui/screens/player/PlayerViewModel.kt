@@ -707,8 +707,9 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
-     * Prioritize streams for real-world TV playback stability and startup speed.
-     * This reduces auto-picking very heavy remux/DV streams that often fail or buffer.
+     * Score streams for auto-selection: prefer best quality, largest size (best encode),
+     * and cached Real-Debrid sources. Matches the StreamSelector display order
+     * (quality desc → size desc) so auto-play picks the top visible source.
      */
     private fun playbackPriorityScore(stream: StreamSource): Int {
         val text = buildString {
@@ -721,28 +722,37 @@ class PlayerViewModel @Inject constructor(
             }
         }.lowercase()
 
-        var score = qualityScore(stream.quality) * 100
+        // Quality is king — 4K=4000, 1080p=3000, 720p=2000, 480p=1000
+        var score = qualityScore(stream.quality) * 1000
 
+        // PREFER larger files — bigger = better encode quality
         val sizeBytes = parseSize(stream.size)
+        val gb = 1024L * 1024 * 1024
         score += when {
-            sizeBytes <= 0L -> 30
-            sizeBytes <= 8L * 1024 * 1024 * 1024 -> 80
-            sizeBytes <= 15L * 1024 * 1024 * 1024 -> 55
-            sizeBytes <= 25L * 1024 * 1024 * 1024 -> 20
-            sizeBytes <= 40L * 1024 * 1024 * 1024 -> -10
-            else -> -90
+            sizeBytes <= 0L -> 0          // Unknown size: neutral
+            sizeBytes > 40L * gb -> 500   // Premium Blu-ray rip
+            sizeBytes > 25L * gb -> 400
+            sizeBytes > 15L * gb -> 300
+            sizeBytes > 8L * gb -> 200
+            sizeBytes > 3L * gb -> 100
+            else -> 50                    // Small file: least preferred
         }
 
-        if (text.contains("remux")) score -= 120
-        if (text.contains("dolby vision") || text.contains(" dovi") || text.contains(" dv ")) score -= 120
-        if (text.contains("cam") || text.contains("hdcam") || text.contains("telesync")) score -= 300
-        if (text.contains("web-dl") || text.contains("webrip")) score += 45
-        if (text.contains("x264") || text.contains("h264")) score += 15
-        if (stream.behaviorHints?.cached == true || text.contains(" rd+")) score += 220
-        if (stream.behaviorHints?.notWebReady == true) score -= 260
-        if (!stream.url.isNullOrBlank() && stream.url.startsWith("http", ignoreCase = true)) score += 80
-        if (stream.url?.startsWith("magnet:", ignoreCase = true) == true) score -= 500
+        // === Bonuses ===
+        // Cached Real-Debrid: massive bonus — instant playback, no torrent wait
+        if (stream.behaviorHints?.cached == true || text.contains(" rd+")) score += 5000
+        // HTTP direct streams: prefer over torrent/magnet
+        if (!stream.url.isNullOrBlank() && stream.url.startsWith("http", ignoreCase = true)) score += 200
 
+        // === Penalties (only genuinely bad sources) ===
+        // CAM/telesync: unwatchable quality
+        if (text.contains("cam") || text.contains("hdcam") || text.contains("telesync")) score -= 10000
+        // Not web-ready (requires transcoding)
+        if (stream.behaviorHints?.notWebReady == true) score -= 3000
+        // Magnet links: require torrent resolution, slow startup
+        if (stream.url?.startsWith("magnet:", ignoreCase = true) == true) score -= 8000
+
+        // NO penalties for remux, Dolby Vision, large files — these are premium quality
         return score
     }
 
@@ -791,17 +801,9 @@ class PlayerViewModel @Inject constructor(
     ): StreamSource? {
         if (streams.isEmpty()) return null
 
-        val maxSizeBytes = 20L * 1024 * 1024 * 1024 // 20GB - anything larger is likely a season pack
-
-        // Step 1: Filter out season packs (>20GB) when possible.
-        val candidates = streams.filter {
-            val size = parseSize(it.size)
-            size == 0L || size < maxSizeBytes // 0 = unknown size, keep those
-        }
-        val pool = if (candidates.isNotEmpty()) candidates else streams
-
-        // Step 2: Score by language affinity and playback stability.
-        return pool.maxByOrNull { stream ->
+        // No size filter — legitimate single movies/episodes can be 20-80GB (Blu-ray remux).
+        // Score by language affinity and quality/size/cached preference.
+        return streams.maxByOrNull { stream ->
             val langScore = streamLanguageScore(stream, preferredLanguage)
             val stabilityScore = playbackPriorityScore(stream)
             (langScore * 10_000) + stabilityScore

@@ -8,6 +8,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -66,32 +67,34 @@ class WatchlistViewModel @Inject constructor(
                 _uiState.value = WatchlistUiState(isLoading = true)
             }
 
-            // Fetch fresh data (will update via StateFlow)
-            try {
-                val items = watchlistRepository.getWatchlistItems()
-                _uiState.value = WatchlistUiState(
-                    isLoading = false,
-                    items = items
-                )
-            } catch (e: Exception) {
-                // Keep showing cached items on error
-                if (_uiState.value.items.isEmpty()) {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        error = e.message
-                    )
-                } else {
-                    _uiState.value = _uiState.value.copy(isLoading = false)
+            // Run local load AND cloud pull IN PARALLEL for faster results
+            val localJob = async {
+                try {
+                    watchlistRepository.getWatchlistItems()
+                } catch (e: Exception) {
+                    null
                 }
             }
+            val cloudJob = async {
+                try {
+                    watchlistRepository.pullWatchlistFromCloud()
+                    // Cloud pull updates via StateFlow observer
+                } catch (_: Exception) {}
+            }
 
-            // Pull from cloud to pick up cross-device additions (movies, etc.)
-            // Runs after local load so user sees cached items instantly
-            try {
-                watchlistRepository.pullWatchlistFromCloud()
-                // pullWatchlistFromCloud clears cache if new items found,
-                // which triggers the StateFlow observer to update UI
-            } catch (_: Exception) {}
+            // Show local items as soon as they're ready
+            val localItems = localJob.await()
+            if (localItems != null) {
+                _uiState.value = WatchlistUiState(
+                    isLoading = false,
+                    items = localItems
+                )
+            } else if (_uiState.value.items.isEmpty()) {
+                _uiState.value = _uiState.value.copy(isLoading = false)
+            }
+
+            // Cloud pull completes in background; StateFlow observer handles UI updates
+            cloudJob.await()
         }
     }
 

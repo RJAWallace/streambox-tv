@@ -945,13 +945,17 @@ class HomeViewModel @Inject constructor(
     }
 
     fun refreshContinueWatchingOnly(forceRefresh: Boolean = false) {
-        // Don't cancel an in-progress Trakt fetch - restarting a fetch that takes
-        // 10+ seconds (424 watched shows, 41 filtered, 50 progress API calls) wastes
-        // time and causes Continue Watching to never appear. Multiple callers
-        // (ON_RESUME, isAuthenticated observer, sync completion) would keep cancelling
-        // each other's fetches. The throttle mechanism prevents redundant fetches.
+        // Don't cancel an in-progress Trakt fetch unless force-refreshing (user left player).
+        // Restarting a fetch that takes 10+ seconds wastes time. Multiple callers
+        // (isAuthenticated observer, sync completion) would keep cancelling each other's
+        // fetches. The throttle mechanism prevents redundant fetches.
         if (refreshContinueWatchingJob?.isActive == true) {
-            return
+            if (forceRefresh) {
+                // User just left player — cancel stale fetch and restart with fresh data
+                refreshContinueWatchingJob?.cancel()
+            } else {
+                return
+            }
         }
         refreshContinueWatchingJob = viewModelScope.launch {
             try {
