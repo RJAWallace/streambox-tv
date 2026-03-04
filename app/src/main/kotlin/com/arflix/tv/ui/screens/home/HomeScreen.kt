@@ -350,12 +350,16 @@ fun HomeScreen(
     LaunchedEffect(displayCategories) {
         val hasCW = displayCategories.firstOrNull()?.id == "continue_watching"
         if (hasCW && !hadContinueWatchingAtZero && !pendingFocusResetOnResume) {
-            // CW was just inserted at index 0 — shift focus down to keep viewing same content
-            focusState.currentRowIndex = (focusState.currentRowIndex + 1)
-                .coerceAtMost((displayCategories.size - 1).coerceAtLeast(0))
-            val shifted = focusState.rowItemIndices.entries.associate { (k, v) -> (k + 1) to v }
-            focusState.rowItemIndices.clear()
-            focusState.rowItemIndices.putAll(shifted)
+            // CW was just inserted at index 0 — shift focus down to keep viewing same content.
+            // Only shift if the user has scrolled away from row 0 (navigated into catalogues).
+            // On initial launch the user is at row 0 and wants to see CW — keep them there.
+            if (focusState.currentRowIndex > 0) {
+                focusState.currentRowIndex = (focusState.currentRowIndex + 1)
+                    .coerceAtMost((displayCategories.size - 1).coerceAtLeast(0))
+                val shifted = focusState.rowItemIndices.entries.associate { (k, v) -> (k + 1) to v }
+                focusState.rowItemIndices.clear()
+                focusState.rowItemIndices.putAll(shifted)
+            }
         } else if (!hasCW && hadContinueWatchingAtZero) {
             // CW was removed from index 0 — shift focus up to keep viewing same content
             if (focusState.currentRowIndex > 0) {

@@ -944,19 +944,18 @@ class HomeViewModel @Inject constructor(
         loadHomeData()
     }
 
+    private var pendingForceRefreshCW = false
+
     fun refreshContinueWatchingOnly(forceRefresh: Boolean = false) {
-        // Don't cancel an in-progress Trakt fetch unless force-refreshing (user left player).
-        // Restarting a fetch that takes 10+ seconds wastes time. Multiple callers
-        // (isAuthenticated observer, sync completion) would keep cancelling each other's
-        // fetches. The throttle mechanism prevents redundant fetches.
+        // Don't cancel an in-progress fetch — cancelling mid-update can leave categories
+        // in an inconsistent state causing crashes. Instead, queue a follow-up refresh.
         if (refreshContinueWatchingJob?.isActive == true) {
             if (forceRefresh) {
-                // User just left player — cancel stale fetch and restart with fresh data
-                refreshContinueWatchingJob?.cancel()
-            } else {
-                return
+                pendingForceRefreshCW = true  // Will re-fetch after current job completes
             }
+            return
         }
+        pendingForceRefreshCW = false
         refreshContinueWatchingJob = viewModelScope.launch {
             try {
                 val now = SystemClock.elapsedRealtime()
@@ -1028,6 +1027,13 @@ class HomeViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 // Silently fail - don't clear existing data on error
+            } finally {
+                // If a forceRefresh was requested while this job was running,
+                // re-trigger now that we've finished cleanly.
+                if (pendingForceRefreshCW) {
+                    pendingForceRefreshCW = false
+                    refreshContinueWatchingOnly(forceRefresh = true)
+                }
             }
         }
     }
