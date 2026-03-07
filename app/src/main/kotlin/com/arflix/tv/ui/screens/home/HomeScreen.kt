@@ -99,6 +99,7 @@ import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
+import com.arflix.tv.ArvioLoadingScreen
 import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
@@ -455,25 +456,11 @@ fun HomeScreen(
             .fillMaxSize()
             .background(BackgroundDark)
       ) {
-        // Full-screen loading screen until CW + catalogues are ready
+        // Full-screen branded loading screen until CW + catalogues are ready.
+        // Nothing renders behind this — prevents crashes from interacting with
+        // unloaded data and hides CW loading bar from being visible.
         if (!uiState.initialDataReady) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    LoadingIndicator(color = Color.White, size = 48.dp)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "Loading...",
-                        style = ArflixTypography.body,
-                        color = Color.White.copy(alpha = 0.6f)
-                    )
-                }
-            }
+            ArvioLoadingScreen()
             return@Box
         }
 

@@ -359,10 +359,25 @@ class HomeViewModel @Inject constructor(
             } catch (_: Exception) { }
         }
         viewModelScope.launch {
-            traktSyncService.syncEvents.collect { status ->
-                if (status == SyncStatus.COMPLETED) {
-                    refreshContinueWatchingOnly()
+            try {
+                traktSyncService.syncEvents.collect { status ->
+                    if (status == SyncStatus.COMPLETED) {
+                        refreshContinueWatchingOnly()
+                    }
                 }
+            } catch (_: Exception) { }
+        }
+        // Safety timeout: if initialDataReady hasn't been set after 8 seconds,
+        // force it to prevent the loading screen from showing forever.
+        viewModelScope.launch {
+            delay(8000L)
+            if (!_uiState.value.initialDataReady) {
+                System.err.println("HomeVM: Safety timeout — forcing initialDataReady after 8s")
+                _uiState.value = _uiState.value.copy(
+                    initialDataReady = true,
+                    cwCheckComplete = true,
+                    isInitialLoad = false
+                )
             }
         }
         // Pre-warm watchlist cache so Watchlist tab opens instantly without "empty" flash
@@ -380,24 +395,29 @@ class HomeViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            catalogRepository.observeCatalogs()
-                .map { catalogs ->
-                    catalogs.joinToString("|") { "${it.id}:${it.title}:${it.sourceUrl.orEmpty()}" }
-                }
-                .distinctUntilChanged()
-                .drop(1) // Skip first emission (startup) to avoid cancelling the initial loadHomeData
-                .collect {
-                    // Apply catalog reorder/add/remove immediately on Home.
-                    loadHomeData()
-                }
+            try {
+                catalogRepository.observeCatalogs()
+                    .map { catalogs ->
+                        catalogs.joinToString("|") { "${it.id}:${it.title}:${it.sourceUrl.orEmpty()}" }
+                    }
+                    .distinctUntilChanged()
+                    .drop(1) // Skip first emission (startup) to avoid cancelling the initial loadHomeData
+                    .collect {
+                        // Apply catalog reorder/add/remove immediately on Home.
+                        loadHomeData()
+                    }
+            } catch (_: Exception) { }
         }
     }
 
     /**
      * Set preloaded data from StartupViewModel for instant display.
-     * This skips the initial network call since data is already loaded.
+     * Caches logos and hero info for use once loadHomeData() finishes.
      *
-     * Shows placeholder Continue Watching cards immediately while real data loads.
+     * IMPORTANT: Does NOT set isInitialLoad = false. The loading screen
+     * must stay visible until loadHomeData() actually completes with real data.
+     * Setting isInitialLoad here was causing premature initialDataReady = true
+     * which dismissed the loading screen before data was ready → crash.
      */
     fun setPreloadedData(
         categories: List<Category>,
@@ -424,48 +444,16 @@ class HomeViewModel @Inject constructor(
 
         usedPreloadedData = true
 
+        // Cache logos from startup preload — they'll be available once loadHomeData finishes
         putCachedLogos(logoCache)
 
-        // Filter out any existing continue_watching from preloaded data
-        val filteredCategories = categories.filter { it.id != "continue_watching" }.toMutableList()
-
-        // Show placeholder Continue Watching immediately while real data loads
-        // This gives instant visual feedback that something is loading
-        val placeholderItems = (1..5).map { index ->
-            MediaItem(
-                id = -index, // Negative IDs for placeholders
-                title = "",
-                mediaType = MediaType.MOVIE,
-                isPlaceholder = true
+        // Store hero info as fallback — loadHomeData will overwrite with real data
+        if (heroItem != null) {
+            _uiState.value = _uiState.value.copy(
+                heroItem = heroItem,
+                heroLogoUrl = heroLogoUrl
             )
         }
-        val placeholderContinueWatching = Category(
-            id = "continue_watching",
-            title = "Continue Watching",
-            items = placeholderItems
-        )
-        filteredCategories.add(0, placeholderContinueWatching)
-
-        // Adjust hero item if it was from continue watching
-        val adjustedHeroItem = if (heroItem != null &&
-            categories.firstOrNull()?.id == "continue_watching" &&
-            categories.firstOrNull()?.items?.any { it.id == heroItem.id } == true) {
-            // Hero was from continue watching, use first item from filtered categories
-            filteredCategories.getOrNull(1)?.items?.firstOrNull() ?: heroItem
-        } else {
-            heroItem
-        }
-
-        _uiState.value = _uiState.value.copy(
-            isLoading = false,
-            isInitialLoad = false,
-            categories = filteredCategories,
-            heroItem = adjustedHeroItem,
-            heroLogoUrl = if (adjustedHeroItem == heroItem) heroLogoUrl else null,
-            error = null
-        )
-        _cardLogoUrls.value = snapshotLogoCache()
-        refreshWatchedBadges()
     }
 
     private fun loadHomeData() {

@@ -1332,6 +1332,14 @@ class TraktRepository @Inject constructor(
     }
 
     /**
+     * Restore preloaded CW data for a profile after caches have been cleared.
+     * Called by ProfileViewModel to re-insert data that was saved before clearAllProfileCaches().
+     */
+    fun restorePreloadedCache(profileId: String, items: List<ContinueWatchingItem>) {
+        preloadedProfileCache[profileId] = items
+    }
+
+    /**
      * Activate preloaded cache for a profile - call when profile is selected.
      * This transfers preloaded data to the active cache for immediate use by HomeViewModel.
      * IMPORTANT: Always clears existing cache first to prevent cross-profile data leakage.

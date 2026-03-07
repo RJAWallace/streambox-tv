@@ -252,6 +252,10 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             // Move heavy cache clearing OFF the main thread
             withContext(Dispatchers.IO) {
+                // Save preloaded CW data BEFORE clearing — clearAllProfileCaches()
+                // wipes preloadedProfileCache, so activatePreloadedCache() would find nothing.
+                val savedPreload = traktRepository.getPreloadedCacheForProfile(profile.id)
+
                 // CRITICAL: Clear ALL profile caches BEFORE switching to ensure complete isolation
                 // This prevents Profile 1's Trakt data from showing in Profile 2
                 // Skip cache invalidation when re-selecting the same profile (e.g., app restart)
@@ -266,8 +270,11 @@ class ProfileViewModel @Inject constructor(
                 // This ensures all profile-scoped keys use the correct prefix immediately
                 profileManager.setCurrentProfileId(profile.id)
 
-                // Activate preloaded cache for instant Continue Watching display
-                // This transfers any preloaded data to the active cache before HomeViewModel loads
+                // Restore and activate preloaded CW data for instant display
+                // The data was gathered during profile focus (preloadForProfile)
+                if (savedPreload.isNotEmpty()) {
+                    traktRepository.restorePreloadedCache(profile.id, savedPreload)
+                }
                 traktRepository.activatePreloadedCache(profile.id)
             }
 
