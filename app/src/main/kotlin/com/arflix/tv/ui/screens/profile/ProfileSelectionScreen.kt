@@ -90,9 +90,9 @@ fun ProfileSelectionScreen(
         }
     }
 
-    // Navigate when activeProfile changes after user selection
-    LaunchedEffect(uiState.activeProfile?.id) {
-        if (navigateTriggered && uiState.activeProfile != null && !uiState.isManageMode) {
+    // Navigate when activeProfile changes AND profile loading is complete
+    LaunchedEffect(uiState.activeProfile?.id, uiState.isProfileLoading) {
+        if (navigateTriggered && uiState.activeProfile != null && !uiState.isManageMode && !uiState.isProfileLoading) {
             onProfileSelected()
         }
     }
@@ -178,15 +178,10 @@ fun ProfileSelectionScreen(
                             if (uiState.isManageMode) {
                                 viewModel.showEditDialog(profile)
                             } else {
-                                // If clicking the already active profile, navigate immediately
-                                // Otherwise, set flag and let LaunchedEffect handle it when activeProfile changes
-                                if (uiState.activeProfile?.id == profile.id) {
-                                    viewModel.selectProfile(profile)
-                                    onProfileSelected()
-                                } else {
-                                    navigateTriggered = true
-                                    viewModel.selectProfile(profile)
-                                }
+                                // Set flag and let LaunchedEffect handle navigation
+                                // when profile loading completes
+                                navigateTriggered = true
+                                viewModel.selectProfile(profile)
                             }
                         },
                         onFocus = { viewModel.preloadForProfile(profile) },
@@ -258,6 +253,29 @@ fun ProfileSelectionScreen(
                 onConfirm = { code -> viewModel.loginWithCode(code) },
                 onDismiss = { viewModel.hideCodeDialog() }
             )
+        }
+
+        // Loading overlay while profile caches are prepared
+        if (uiState.isProfileLoading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.7f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    com.arflix.tv.ui.components.LoadingIndicator(
+                        color = Color.White,
+                        size = 48.dp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Loading profile...",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 14.sp
+                    )
+                }
+            }
         }
     }
 }

@@ -25,6 +25,7 @@ data class ProfileUiState(
     val profiles: List<Profile> = emptyList(),
     val activeProfile: Profile? = null,
     val isLoading: Boolean = true,
+    val isProfileLoading: Boolean = false,
     val isManageMode: Boolean = false,
     // Add profile dialog state
     val showAddDialog: Boolean = false,
@@ -237,6 +238,9 @@ class ProfileViewModel @Inject constructor(
         val previousProfileId = profileManager.getProfileIdSync()
         val isSameProfile = previousProfileId == profile.id
 
+        // Show loading overlay while profile caches are prepared
+        _uiState.value = _uiState.value.copy(isProfileLoading = true)
+
         // CRITICAL: Clear ALL profile caches BEFORE switching to ensure complete isolation
         // This prevents Profile 1's Trakt data from showing in Profile 2
         // Skip cache invalidation when re-selecting the same profile (e.g., app restart)
@@ -277,6 +281,13 @@ class ProfileViewModel @Inject constructor(
                 iptvRepository.warmXtreamVodCachesIfPossible()
                 System.err.println("[IPTV-STARTUP] Profile ${profile.name}: VOD catalogs warmed")
             }
+        }
+
+        // Signal that profile setup is complete — safe to navigate to Home.
+        // Small delay ensures activeProfile state propagates and caches are consistent.
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(400)
+            _uiState.value = _uiState.value.copy(isProfileLoading = false)
         }
     }
 
