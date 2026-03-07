@@ -468,7 +468,7 @@ private fun SearchResultRow(
                     childFraction = 0.0f
                 )
             ) {
-                itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
+                itemsIndexed(items, key = { index, it -> "${it.mediaType.name}-${it.id}-$index" }) { index, item ->
                     // Create item with year in subtitle (e.g., "Movie | 2023")
                     val mediaTypeLabel = when (item.mediaType) {
                         MediaType.TV -> "TV Show"

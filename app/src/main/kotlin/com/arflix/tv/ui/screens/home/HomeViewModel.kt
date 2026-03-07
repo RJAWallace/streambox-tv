@@ -393,7 +393,7 @@ class HomeViewModel @Inject constructor(
                     val cwCategory = Category(
                         id = "continue_watching",
                         title = "Continue Watching",
-                        items = merged.map { it.toMediaItem() }
+                        items = merged.map { it.toMediaItem() }.deduplicateItems()
                     )
                     cwCategory.items.forEach { mediaRepository.cacheItem(it) }
                     lastContinueWatchingItems = cwCategory.items
@@ -651,7 +651,7 @@ class HomeViewModel @Inject constructor(
                     val continueWatchingCategory = Category(
                         id = "continue_watching",
                         title = "Continue Watching",
-                        items = mergedCachedContinueWatching.map { it.toMediaItem() }
+                        items = mergedCachedContinueWatching.map { it.toMediaItem() }.deduplicateItems()
                     )
                     continueWatchingCategory.items.forEach { mediaRepository.cacheItem(it) }
                     lastContinueWatchingItems = continueWatchingCategory.items
@@ -733,7 +733,7 @@ class HomeViewModel @Inject constructor(
                         val continueWatchingCategory = Category(
                             id = "continue_watching",
                             title = "Continue Watching",
-                            items = supabaseItems.map { it.toMediaItem() }
+                            items = supabaseItems.map { it.toMediaItem() }.deduplicateItems()
                         )
                         continueWatchingCategory.items.forEach { mediaRepository.cacheItem(it) }
                         lastContinueWatchingItems = continueWatchingCategory.items
@@ -974,7 +974,7 @@ class HomeViewModel @Inject constructor(
                 Category(
                     id = "continue_watching",
                     title = "Continue Watching",
-                    items = cachedContinueWatching.map { it.toMediaItem() }
+                    items = cachedContinueWatching.map { it.toMediaItem() }.deduplicateItems()
                 )
             )
         } else {
@@ -1075,7 +1075,7 @@ class HomeViewModel @Inject constructor(
                     val continueWatchingCategory = Category(
                         id = "continue_watching",
                         title = "Continue Watching",
-                        items = mergedContinueWatching.map { it.toMediaItem() }
+                        items = mergedContinueWatching.map { it.toMediaItem() }.deduplicateItems()
                     )
                     continueWatchingCategory.items.forEach { mediaRepository.cacheItem(it) }
                     lastContinueWatchingItems = continueWatchingCategory.items
@@ -1812,5 +1812,12 @@ class HomeViewModel @Inject constructor(
             }
         }
     }
+
+    /**
+     * Remove duplicate items within a list, keeping the first occurrence.
+     * Prevents LazyRow crash: "Key X was already used".
+     */
+    private fun List<MediaItem>.deduplicateItems(): List<MediaItem> =
+        distinctBy { "${it.mediaType.name}-${it.id}" }
 }
 

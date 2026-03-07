@@ -1634,9 +1634,10 @@ private fun ContentRow(
             ) {
             itemsIndexed(
                 category.items,
-                key = { _, item ->
-                    // Stable identity prevents unnecessary card disposal/recreation on progress/title updates.
-                    "${item.mediaType.name}-${item.id}"
+                key = { index, item ->
+                    // Include index to prevent crash from duplicate items (same show in CW multiple times).
+                    // Deduplication in ViewModel should prevent this, but index suffix is a safety net.
+                    "${item.mediaType.name}-${item.id}-$index"
                 },
                 contentType = { _, item -> "${item.mediaType.name}_card" }
             ) { index, item ->
