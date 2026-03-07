@@ -460,6 +460,16 @@ class StreamRepository @Inject constructor(
         return Pair(baseUrl, queryParams)
     }
 
+    /**
+     * Fetch a Stremio catalog from a raw URL (no addon lookup needed).
+     * Used for AI Search and other direct addon integrations.
+     */
+    suspend fun fetchCatalogUrl(url: String): StremioCatalogResponse =
+        withContext(Dispatchers.IO) {
+            runCatching { streamApi.getAddonCatalog(url) }
+                .getOrElse { StremioCatalogResponse(metas = emptyList()) }
+        }
+
     suspend fun getAddonCatalogPage(
         addonId: String,
         catalogType: String,

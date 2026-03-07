@@ -69,49 +69,47 @@ class SearchViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
             try {
-                val results = mediaRepository.search(query)
-
-                // Smart sorting: prioritize main content over documentaries/specials
-                // 1. Exact/close title matches first
-                // 2. High popularity (main releases) before low popularity (documentaries)
-                // 3. Then by year descending (newest first)
-                val queryLower = query.lowercase()
-                val sortedResults = results.sortedWith(
-                    compareBy<MediaItem> { item ->
-                        // Priority 1: Title match score (lower = better match)
-                        val titleLower = item.title.lowercase()
-                        when {
-                            titleLower == queryLower -> 0  // Exact match
-                            titleLower.startsWith(queryLower) -> 1  // Starts with query
-                            titleLower.contains(queryLower) -> 2  // Contains query
-                            else -> 3  // Partial/fuzzy match
+                // Primary: AI Search (better relevance and ordering)
+                // Fallback: TMDB search if AI search returns nothing
+                val aiResults = runCatching { mediaRepository.searchAI(query) }.getOrElse { emptyList() }
+                val results = if (aiResults.isNotEmpty()) {
+                    // AI search returns well-ordered results — keep the addon's ordering.
+                    // Supplement with TMDB results for items AI might have missed.
+                    val tmdbResults = runCatching { mediaRepository.search(query) }.getOrElse { emptyList() }
+                    val aiIds = aiResults.map { "${it.mediaType.name}-${it.id}" }.toSet()
+                    val extraTmdb = tmdbResults.filter { "${it.mediaType.name}-${it.id}" !in aiIds }
+                    aiResults + extraTmdb
+                } else {
+                    // AI search unavailable — fall back to TMDB with smart sorting
+                    val tmdbResults = mediaRepository.search(query)
+                    val queryLower = query.lowercase()
+                    tmdbResults.sortedWith(
+                        compareBy<MediaItem> { item ->
+                            val titleLower = item.title.lowercase()
+                            when {
+                                titleLower == queryLower -> 0
+                                titleLower.startsWith(queryLower) -> 1
+                                titleLower.contains(queryLower) -> 2
+                                else -> 3
+                            }
+                        }.thenByDescending { item ->
+                            val isDocumentary = item.genreIds.contains(99) || item.genreIds.contains(10763)
+                            val titleLower = item.title.lowercase()
+                            val isSpecial = titleLower.contains("making of") ||
+                                    titleLower.contains("behind the") ||
+                                    titleLower.contains("special") ||
+                                    titleLower.contains("documentary") ||
+                                    titleLower.contains("featurette")
+                            if (isDocumentary || isSpecial) item.popularity * 0.1f else item.popularity
+                        }.thenByDescending { item ->
+                            item.year.toIntOrNull() ?: 0
                         }
-                    }.thenByDescending { item ->
-                        // Priority 2: Popularity (higher = main content)
-                        // Documentary genre IDs: 99 (movie), 10763 (TV documentary)
-                        // Lower popularity for documentaries/specials
-                        val isDocumentary = item.genreIds.contains(99) || item.genreIds.contains(10763)
-                        val titleLower = item.title.lowercase()
-                        val isSpecial = titleLower.contains("making of") ||
-                                titleLower.contains("behind the") ||
-                                titleLower.contains("special") ||
-                                titleLower.contains("documentary") ||
-                                titleLower.contains("featurette")
-
-                        if (isDocumentary || isSpecial) {
-                            item.popularity * 0.1f  // Deprioritize documentaries/specials
-                        } else {
-                            item.popularity
-                        }
-                    }.thenByDescending { item ->
-                        // Priority 3: Year (newest first)
-                        item.year.toIntOrNull() ?: 0
-                    }
-                )
+                    )
+                }
 
                 // Separate into movies and TV shows
-                val movies = sortedResults.filter { it.mediaType == MediaType.MOVIE }
-                val tvShows = sortedResults.filter { it.mediaType == MediaType.TV }
+                val movies = results.filter { it.mediaType == MediaType.MOVIE }
+                val tvShows = results.filter { it.mediaType == MediaType.TV }
                 val topForLogos = (movies.take(16) + tvShows.take(16)).distinctBy { "${it.mediaType}_${it.id}" }
                 val logoMap = withContext(Dispatchers.IO) {
                     topForLogos.map { item ->
@@ -127,7 +125,7 @@ class SearchViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     hasSearched = true,
-                    results = sortedResults,
+                    results = results,
                     movieResults = movies,
                     tvResults = tvShows,
                     cardLogoUrls = logoMap

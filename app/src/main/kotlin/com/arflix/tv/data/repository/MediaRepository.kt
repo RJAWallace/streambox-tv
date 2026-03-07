@@ -32,6 +32,7 @@ import com.google.gson.reflect.TypeToken
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -60,6 +61,9 @@ class MediaRepository @Inject constructor(
 
     private val apiKey = Constants.TMDB_API_KEY
     private val gson = Gson()
+
+    // Stremio AI Search addon base URL (includes auth token for Gemini API)
+    private val AI_SEARCH_BASE_URL = "https://stremio.itcon.au/aisearch/ZDI0ODU3NWZkNzY5NmRiNzYzOGNkY2NjMmM3OTdmMDY6R0hENlhKbUpHT0JONHdBS3dINmx4VEtoY1ZuRkFucWJ4TGFRQVlqU2F0TTBFNXA4K1RwTmV1cEFWNTNXTVdMYVE2VzNZUXZOWWROcFJGbDkwZ2FYQ1BlZ1U4RG9VVklrYllyZ0RmOThlSW1qTW5Zd05WWkdSSXplcDhZTHVJelJBakZjRnpFZnRVOXdSNm15czV1djZnZGxucVlleStPb3JqNUwvUndCZWVBbWJFVDh2UWsya25qd1BwNFhGZytSclpWdHg4T2d4TzdiSWdDUXRzYVp5RzJrYnNwbjNFaHFoU2NTQTRjSyttNlRSMDlTQ1h3SjBSZ0RTZWgveldlU1MxN1F2aTlSbjlOWmE1ZXZsdTdXaUwwNFZxVVJBWlBwcUN4aEtYU0NSRllhQkswUEhtanJFSEhZYnBzV2VQMVdGNEFVR01HSzhQTlpnSFRVLytyc1FXOTU0ZCtqMGdja2RPM2orV2lRQWVndGdFcVl2cXNwTDgvaDRPblVRVm4zaXJ3bE1Xd0c0R2JrQk8xQXp5U1RIK1Q1aDdpRmU4SHdGMW5ycDlvVmYwMD0"
 
     // === IN-MEMORY CACHE FOR PERFORMANCE ===
     private data class CacheEntry<T>(val data: T, val timestamp: Long)
@@ -1128,6 +1132,70 @@ class MediaRepository @Inject constructor(
                     if (it.mediaType == "tv") MediaType.TV else MediaType.MOVIE
                 )
             }
+        cacheItems(items)
+        return items
+    }
+
+    /**
+     * AI-powered search using Stremio AI Search addon.
+     * Returns better-ordered, semantically relevant results (e.g. "jurassic" returns
+     * all Jurassic Park/World films in order). Falls back to empty list on failure.
+     *
+     * Results come with IMDB IDs which are resolved to TMDB IDs in parallel.
+     */
+    suspend fun searchAI(query: String): List<MediaItem> {
+        val baseUrl = AI_SEARCH_BASE_URL
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+
+        // Fetch movie and series results in parallel
+        val (movieMetas, seriesMetas) = coroutineScope {
+            val movies = async {
+                streamRepository.fetchCatalogUrl(
+                    "$baseUrl/catalog/movie/aisearch.top/search=$encodedQuery.json"
+                )
+            }
+            val series = async {
+                streamRepository.fetchCatalogUrl(
+                    "$baseUrl/catalog/series/aisearch.top/search=$encodedQuery.json"
+                )
+            }
+            val movieResponse = movies.await()
+            val seriesResponse = series.await()
+            (movieResponse.metas ?: movieResponse.items ?: emptyList()) to
+                (seriesResponse.metas ?: seriesResponse.items ?: emptyList())
+        }
+
+        // Combine: movies first, then series (addon returns them well-ordered)
+        val allMetas = movieMetas + seriesMetas
+        if (allMetas.isEmpty()) return emptyList()
+
+        // Resolve IMDB IDs to TMDB IDs in parallel (max 6 concurrent)
+        val semaphore = Semaphore(6)
+        val items = coroutineScope {
+            allMetas.mapNotNull { meta ->
+                val imdbId = meta.id?.takeIf { it.startsWith("tt") } ?: return@mapNotNull null
+                val mediaTypeHint = when (meta.type) {
+                    "movie" -> MediaType.MOVIE
+                    "series" -> MediaType.TV
+                    else -> null
+                }
+                async {
+                    semaphore.withPermit {
+                        val ref = resolveImdbToTmdbRef(imdbId, mediaTypeHint) ?: return@async null
+                        // Build MediaItem from addon data + resolved TMDB ID
+                        MediaItem(
+                            id = ref.second,
+                            title = meta.name ?: "",
+                            mediaType = ref.first,
+                            image = meta.poster ?: "",
+                            backdrop = meta.background,
+                            overview = meta.description ?: "",
+                            year = meta.releaseInfo ?: meta.year?.toString() ?: ""
+                        )
+                    }
+                }
+            }.mapNotNull { it.await() }
+        }
         cacheItems(items)
         return items
     }

@@ -10,6 +10,8 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
@@ -54,11 +56,23 @@ class ProfileRepository @Inject constructor(
     }
 
     /**
-     * Flow of the active profile
+     * Session-scoped gate: false on app launch, true after explicit profile selection.
+     * Ensures "Who's watching?" screen always shows on fresh app start (Netflix/Disney+ model).
      */
-    val activeProfile: Flow<Profile?> = context.profilesDataStore.data.map { prefs ->
-        val activeId = prefs[ACTIVE_PROFILE_KEY] ?: return@map null
-        val json = prefs[PROFILES_KEY] ?: return@map null
+    private val _profileSelectedThisSession = MutableStateFlow(false)
+
+    /**
+     * Flow of the active profile.
+     * Returns null until a profile is explicitly selected this session,
+     * which forces the profile selection overlay to display on every launch.
+     */
+    val activeProfile: Flow<Profile?> = combine(
+        _profileSelectedThisSession,
+        context.profilesDataStore.data
+    ) { selected, prefs ->
+        if (!selected) return@combine null
+        val activeId = prefs[ACTIVE_PROFILE_KEY] ?: return@combine null
+        val json = prefs[PROFILES_KEY] ?: return@combine null
         try {
             val type = object : TypeToken<List<Profile>>() {}.type
             val profileList: List<Profile> = gson.fromJson(json, type)
@@ -156,6 +170,7 @@ class ProfileRepository @Inject constructor(
                 prefs[PROFILES_KEY] = gson.toJson(currentList)
             }
         }
+        _profileSelectedThisSession.value = true
         pushProfilesStateToCloud()
     }
 
@@ -163,6 +178,7 @@ class ProfileRepository @Inject constructor(
      * Clear active profile (for switching)
      */
     suspend fun clearActiveProfile() {
+        _profileSelectedThisSession.value = false
         context.profilesDataStore.edit { prefs ->
             prefs.remove(ACTIVE_PROFILE_KEY)
         }
@@ -177,9 +193,8 @@ class ProfileRepository @Inject constructor(
             prefs[PROFILES_KEY] = gson.toJson(profiles)
             if (!activeProfileId.isNullOrBlank() && profiles.any { it.id == activeProfileId }) {
                 prefs[ACTIVE_PROFILE_KEY] = activeProfileId
-            } else if (profiles.isNotEmpty()) {
-                prefs[ACTIVE_PROFILE_KEY] = profiles.first().id
             } else {
+                // Don't auto-select first profile — user must explicitly choose on profile screen
                 prefs.remove(ACTIVE_PROFILE_KEY)
             }
         }
