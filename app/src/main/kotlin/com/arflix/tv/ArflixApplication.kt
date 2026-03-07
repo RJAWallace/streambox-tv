@@ -20,6 +20,7 @@ import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.CrashlyticsProvider
+import com.arflix.tv.util.RemoteCrashLogger
 import com.arflix.tv.worker.TraktSyncWorker
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +46,21 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         super.onCreate()
         instance = this
 
+        // Install remote crash handler — catches uncaught exceptions and
+        // sends the stack trace to Supabase debug_logs before the process dies.
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            RemoteCrashLogger.fatal(
+                "CRASH",
+                "Uncaught exception on ${thread.name}",
+                throwable
+            )
+            // Chain to the original handler (which kills the process)
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
+
+        RemoteCrashLogger.checkpoint("App", "onCreate start")
+
         // Initialize OkHttp disk cache before any network calls
         OkHttpProvider.init(this)
 
@@ -54,6 +70,8 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
         appScope.launch {
             runCatching { profileManager.initialize() }
         }
+
+        RemoteCrashLogger.checkpoint("App", "onCreate complete")
     }
 
     override fun newImageLoader(): ImageLoader {

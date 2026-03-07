@@ -332,6 +332,7 @@ class HomeViewModel @Inject constructor(
      * If it's the same profile, does nothing (fast path for back-navigation).
      */
     fun ensureLoadedForProfile(profileId: String) {
+        com.arflix.tv.util.RemoteCrashLogger.checkpoint("HomeVM", "ensureLoadedForProfile: $profileId (was: $loadedForProfileId)")
         if (loadedForProfileId == profileId) return
         loadedForProfileId = profileId
         reloadForNewProfile()
@@ -450,6 +451,7 @@ class HomeViewModel @Inject constructor(
     }
 
     init {
+        com.arflix.tv.util.RemoteCrashLogger.checkpoint("HomeVM", "init start")
         // ── ONE-TIME OBSERVERS (survive profile switches) ──
         // These are long-lived collectors that never need to restart.
 
@@ -485,6 +487,7 @@ class HomeViewModel @Inject constructor(
 
         // NOTE: No profile-specific loading here!
         // ensureLoadedForProfile() triggers startProfileDataLoad() when the profile is known.
+        com.arflix.tv.util.RemoteCrashLogger.checkpoint("HomeVM", "init complete")
     }
 
     /**

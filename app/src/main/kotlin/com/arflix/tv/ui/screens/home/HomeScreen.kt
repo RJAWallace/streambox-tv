@@ -211,7 +211,6 @@ private fun getFocusedItem(categories: List<Category>, rowIndex: Int, itemIndex:
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    viewModel: HomeViewModel = hiltViewModel(),
     preloadedCategories: List<Category> = emptyList(),
     preloadedHeroItem: MediaItem? = null,
     preloadedHeroLogoUrl: String? = null,
@@ -226,12 +225,37 @@ fun HomeScreen(
     onSwitchProfile: () -> Unit = {},
     onExitApp: () -> Unit = {}
 ) {
-    // ── Detect profile changes and trigger data reload ──
-    // HomeScreen is the startDestination and lives forever.
-    // Profile switch = reload data in place (Netflix/Disney+ pattern).
-    LaunchedEffect(currentProfile?.id) {
-        val profileId = currentProfile?.id ?: return@LaunchedEffect
-        viewModel.ensureLoadedForProfile(profileId)
+    // ── PROFILE SELECTION OVERLAY ──────────────────────────────────────
+    // When no active profile is set, show the profile selection screen
+    // as a full-screen overlay. HomeViewModel is NOT created yet — this
+    // prevents the crash from heavy ViewModel init at app launch.
+    // Profile selection is just a lightweight UI layer.
+    com.arflix.tv.util.RemoteCrashLogger.checkpoint("HomeScreen", "compose: currentProfile=${currentProfile?.name ?: "null"}")
+    if (currentProfile == null) {
+        com.arflix.tv.util.RemoteCrashLogger.checkpoint("HomeScreen", "showing ProfileSelectionScreen overlay")
+        ProfileSelectionScreen(
+            onProfileSelected = {
+                // No navigation needed — the activeProfile flow update
+                // causes currentProfile to change, which automatically
+                // hides this overlay and shows the loading screen.
+            },
+            onShowAddProfile = {}
+        )
+        return
+    }
+
+    // ── PROFILE-SCOPED CONTENT ─────────────────────────────────────────
+    // Profile is active — NOW create the ViewModel.
+    // By deferring hiltViewModel() until after the null check, we avoid
+    // creating HomeViewModel (with its heavy init{} block) at app launch
+    // when no profile is selected yet. This is the root crash fix.
+    com.arflix.tv.util.RemoteCrashLogger.checkpoint("HomeScreen", "creating HomeViewModel for profile ${currentProfile.name}")
+    val viewModel: HomeViewModel = hiltViewModel()
+    com.arflix.tv.util.RemoteCrashLogger.checkpoint("HomeScreen", "HomeViewModel created OK")
+
+    // Detect profile changes and trigger data reload
+    LaunchedEffect(currentProfile.id) {
+        viewModel.ensureLoadedForProfile(currentProfile.id)
     }
 
     // Use preloaded data from StartupViewModel if available
@@ -247,26 +271,11 @@ fun HomeScreen(
     }
     val uiState by viewModel.uiState.collectAsState()
 
-    // ── PROFILE SELECTION OVERLAY ──────────────────────────────────────
-    // When no active profile is set, show the profile selection screen
-    // as a full-screen overlay. HomeViewModel stays alive underneath.
-    // This eliminates the navigation-triggered crash: no screen destruction,
-    // no ViewModel recreation, no cast issues. Profile selection is just
-    // a UI layer on top of the already-initialized Home.
-    if (currentProfile == null) {
-        ProfileSelectionScreen(
-            onProfileSelected = {
-                // No navigation needed — the activeProfile flow update
-                // causes currentProfile to change, which automatically
-                // hides this overlay and shows the loading screen.
-            },
-            onShowAddProfile = {}
-        )
+    // Loading screen while data loads for this profile
+    if (!uiState.initialDataReady) {
+        ArvioLoadingScreen()
         return
     }
-
-    // ── PROFILE-SCOPED CONTENT ─────────────────────────────────────────
-    // Everything below only renders when a profile is active.
 
     // Performance: Directly collect StateFlow instead of syncing to mutableStateMapOf
     // This avoids O(n) iteration on every logo cache update
@@ -488,13 +497,8 @@ fun HomeScreen(
             .fillMaxSize()
             .background(BackgroundDark)
       ) {
-        // Full-screen branded loading screen until CW + catalogues are ready.
-        // Nothing renders behind this — prevents crashes from interacting with
-        // unloaded data and hides CW loading bar from being visible.
-        if (!uiState.initialDataReady) {
-            ArvioLoadingScreen()
-            return@Box
-        }
+        // NOTE: initialDataReady check is now at the top of HomeScreen (before this Box).
+        // If we reach here, data is guaranteed to be ready.
 
         // Hero background with lightweight alpha fade (avoids Crossfade double-composition)
         val currentBackdrop = displayHeroItem?.backdrop ?: displayHeroItem?.image

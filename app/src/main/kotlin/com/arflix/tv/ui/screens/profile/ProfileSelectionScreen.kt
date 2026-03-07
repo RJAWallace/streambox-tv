@@ -64,6 +64,7 @@ fun ProfileSelectionScreen(
     onShowAddProfile: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    com.arflix.tv.util.RemoteCrashLogger.checkpoint("ProfileScreen", "compose: ${uiState.profiles.size} profiles, loggedIn=${uiState.isLoggedIn}")
 
     // Create focus requesters for each profile slot (max 5 profiles + 1 add button)
     val focusRequesters = remember { List(6) { FocusRequester() } }
@@ -180,6 +181,7 @@ fun ProfileSelectionScreen(
                             } else {
                                 // Set flag and let LaunchedEffect handle navigation
                                 // when profile loading completes
+                                com.arflix.tv.util.RemoteCrashLogger.checkpoint("ProfileScreen", "selectProfile: ${profile.name} (id=${profile.id})")
                                 navigateTriggered = true
                                 viewModel.selectProfile(profile)
                             }

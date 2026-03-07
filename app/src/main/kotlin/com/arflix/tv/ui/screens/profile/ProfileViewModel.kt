@@ -240,6 +240,7 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun selectProfile(profile: Profile) {
+        com.arflix.tv.util.RemoteCrashLogger.checkpoint("ProfileVM", "selectProfile start: ${profile.name}")
         val previousProfileId = profileManager.getProfileIdSync()
         val isSameProfile = previousProfileId == profile.id
 
@@ -279,9 +280,11 @@ class ProfileViewModel @Inject constructor(
             }
 
             // Persist the active profile selection
+            com.arflix.tv.util.RemoteCrashLogger.checkpoint("ProfileVM", "setActiveProfile: ${profile.id}")
             profileRepository.setActiveProfile(profile.id)
 
             // Signal that profile setup is complete — safe to navigate to Home.
+            com.arflix.tv.util.RemoteCrashLogger.checkpoint("ProfileVM", "isProfileLoading = false")
             _uiState.value = _uiState.value.copy(isProfileLoading = false)
         }
 
