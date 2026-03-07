@@ -14,10 +14,12 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import javax.inject.Inject
 
@@ -227,9 +229,12 @@ class ProfileViewModel @Inject constructor(
     /**
      * Preload Continue Watching data when a profile is focused (before selection).
      * This enables instant display when the user actually selects the profile.
+     * Debounced: cancels previous preload if user navigates quickly between profiles.
      */
+    private var preloadJob: Job? = null
     fun preloadForProfile(profile: Profile) {
-        viewModelScope.launch {
+        preloadJob?.cancel()
+        preloadJob = viewModelScope.launch(Dispatchers.IO) {
             traktRepository.preloadContinueWatchingForProfile(profile.id)
         }
     }
@@ -241,28 +246,38 @@ class ProfileViewModel @Inject constructor(
         // Show loading overlay while profile caches are prepared
         _uiState.value = _uiState.value.copy(isProfileLoading = true)
 
-        // CRITICAL: Clear ALL profile caches BEFORE switching to ensure complete isolation
-        // This prevents Profile 1's Trakt data from showing in Profile 2
-        // Skip cache invalidation when re-selecting the same profile (e.g., app restart)
-        // to preserve warm in-memory IPTV/VOD caches.
-        traktRepository.clearAllProfileCaches()
-        watchlistRepository.clearWatchlistCache()
-        if (!isSameProfile) {
-            iptvRepository.invalidateCache()
-        }
+        // Cancel any in-flight preload since we're selecting now
+        preloadJob?.cancel()
 
-        // Update ProfileManager's cache with the new profile ID
-        // This ensures all profile-scoped keys use the correct prefix immediately
-        profileManager.setCurrentProfileId(profile.id)
-
-        // Activate preloaded cache for instant Continue Watching display
-        // This transfers any preloaded data to the active cache before HomeViewModel loads
-        traktRepository.activatePreloadedCache(profile.id)
-
-        // Persist the active profile selection
         viewModelScope.launch {
+            // Move heavy cache clearing OFF the main thread
+            withContext(Dispatchers.IO) {
+                // CRITICAL: Clear ALL profile caches BEFORE switching to ensure complete isolation
+                // This prevents Profile 1's Trakt data from showing in Profile 2
+                // Skip cache invalidation when re-selecting the same profile (e.g., app restart)
+                // to preserve warm in-memory IPTV/VOD caches.
+                traktRepository.clearAllProfileCaches()
+                watchlistRepository.clearWatchlistCache()
+                if (!isSameProfile) {
+                    iptvRepository.invalidateCache()
+                }
+
+                // Update ProfileManager's cache with the new profile ID
+                // This ensures all profile-scoped keys use the correct prefix immediately
+                profileManager.setCurrentProfileId(profile.id)
+
+                // Activate preloaded cache for instant Continue Watching display
+                // This transfers any preloaded data to the active cache before HomeViewModel loads
+                traktRepository.activatePreloadedCache(profile.id)
+            }
+
+            // Persist the active profile selection
             profileRepository.setActiveProfile(profile.id)
+
+            // Signal that profile setup is complete — safe to navigate to Home.
+            _uiState.value = _uiState.value.copy(isProfileLoading = false)
         }
+
         // Warm IPTV channels from disk cache, then do a background network refresh.
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
@@ -281,13 +296,6 @@ class ProfileViewModel @Inject constructor(
                 iptvRepository.warmXtreamVodCachesIfPossible()
                 System.err.println("[IPTV-STARTUP] Profile ${profile.name}: VOD catalogs warmed")
             }
-        }
-
-        // Signal that profile setup is complete — safe to navigate to Home.
-        // Small delay ensures activeProfile state propagates and caches are consistent.
-        viewModelScope.launch {
-            kotlinx.coroutines.delay(400)
-            _uiState.value = _uiState.value.copy(isProfileLoading = false)
         }
     }
 

@@ -455,6 +455,28 @@ fun HomeScreen(
             .fillMaxSize()
             .background(BackgroundDark)
       ) {
+        // Full-screen loading screen until CW + catalogues are ready
+        if (!uiState.initialDataReady) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    LoadingIndicator(color = Color.White, size = 48.dp)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Loading...",
+                        style = ArflixTypography.body,
+                        color = Color.White.copy(alpha = 0.6f)
+                    )
+                }
+            }
+            return@Box
+        }
+
         // Hero background with lightweight alpha fade (avoids Crossfade double-composition)
         val currentBackdrop = displayHeroItem?.backdrop ?: displayHeroItem?.image
         val backdropAlpha = remember { Animatable(1f) }

@@ -76,7 +76,7 @@ fun ProfileSelectionScreen(
 
     // Set ready for input after a short delay to ignore stray key events
     LaunchedEffect(Unit) {
-        delay(300)  // Wait for any pending key events to clear
+        delay(150)  // Wait for any pending key events to clear
         isReadyForInput = true
     }
 
@@ -85,7 +85,7 @@ fun ProfileSelectionScreen(
         // Only reset when a dialog just closed (not on initial load)
         if (!uiState.showAddDialog && uiState.editingProfile == null && isReadyForInput) {
             isReadyForInput = false
-            delay(300)
+            delay(150)
             isReadyForInput = true
         }
     }

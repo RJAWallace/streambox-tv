@@ -69,6 +69,8 @@ data class HomeUiState(
     val isAuthenticated: Boolean = false,
     // CW check complete — prevents showing trending then scrolling to CW
     val cwCheckComplete: Boolean = false,
+    // True when CW + catalogues + watchlist are all loaded — HomeScreen shows loading until this is true
+    val initialDataReady: Boolean = false,
     // Toast
     val toastMessage: String? = null,
     val toastType: ToastType = ToastType.INFO
@@ -299,6 +301,17 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Check if initial data (CW + catalogues) is fully loaded.
+     * When ready, set initialDataReady = true so HomeScreen can dismiss its loading screen.
+     */
+    private fun markInitialDataReadyIfComplete() {
+        val state = _uiState.value
+        if (!state.initialDataReady && state.cwCheckComplete && !state.isInitialLoad) {
+            _uiState.value = state.copy(initialDataReady = true)
+        }
+    }
+
     init {
         // Instantly show Continue Watching from disk cache before anything else loads.
         viewModelScope.launch {
@@ -325,6 +338,7 @@ class HomeViewModel @Inject constructor(
             // Mark CW check complete so HomeScreen can render immediately
             // without showing trending first then scrolling up to CW
             _uiState.value = _uiState.value.copy(cwCheckComplete = true)
+            markInitialDataReadyIfComplete()
         }
         loadHomeData()
         // Refresh Continue Watching from Supabase after initial load settles.
@@ -350,6 +364,13 @@ class HomeViewModel @Inject constructor(
                     refreshContinueWatchingOnly()
                 }
             }
+        }
+        // Pre-warm watchlist cache so Watchlist tab opens instantly without "empty" flash
+        viewModelScope.launch {
+            try {
+                watchlistRepository.getWatchlistItems()
+                watchlistRepository.pullWatchlistFromCloud()
+            } catch (_: Exception) {}
         }
         viewModelScope.launch(Dispatchers.IO) {
             // Warm IPTV/EPG in background shortly after app start so TV page opens with data.
@@ -626,6 +647,7 @@ class HomeViewModel @Inject constructor(
                     isAuthenticated = traktRepository.isAuthenticated.first(),
                     error = null
                 )
+                markInitialDataReadyIfComplete()
                 _cardLogoUrls.value = snapshotLogoCache()
                 refreshWatchedBadges()
                 val allCatalogs = catalogRepository.getCatalogs()
@@ -665,6 +687,7 @@ class HomeViewModel @Inject constructor(
                     isInitialLoad = false,
                     error = if (_uiState.value.categories.isEmpty()) e.message ?: "Failed to load content" else null
                 )
+                markInitialDataReadyIfComplete()
             } finally {
             }
         }
