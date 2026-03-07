@@ -304,9 +304,10 @@ fun ArflixApp(
         }
     }
 
-    // Always start at profile selection — ProfileSelectionScreen handles
-    // showing the code entry dialog if not authenticated
-    val startDestination = Screen.ProfileSelection.route
+    // Start at Home — ProfileSelectionScreen is rendered as an overlay
+    // within HomeScreen when no active profile is set. This keeps
+    // HomeViewModel alive from app launch (Netflix/Disney+ pattern).
+    val startDestination = Screen.Home.route
 
     Box(
         modifier = Modifier

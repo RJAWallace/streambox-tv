@@ -1,10 +1,6 @@
 package com.arflix.tv.navigation
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -15,7 +11,6 @@ import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.Profile
-import com.arflix.tv.data.repository.AuthState
 import com.arflix.tv.ui.screens.details.DetailsScreen
 import com.arflix.tv.ui.screens.home.HomeScreen
 import com.arflix.tv.ui.screens.player.PlayerScreen
@@ -23,7 +18,6 @@ import com.arflix.tv.ui.screens.search.SearchScreen
 import com.arflix.tv.ui.screens.settings.SettingsScreen
 import com.arflix.tv.ui.screens.tv.TvScreen
 import com.arflix.tv.ui.screens.watchlist.WatchlistScreen
-import com.arflix.tv.ui.screens.profile.ProfileSelectionScreen
 
 /**
  * Navigation destinations
@@ -84,7 +78,7 @@ sealed class Screen(val route: String) {
 @Composable
 fun AppNavigation(
     navController: NavHostController = rememberNavController(),
-    startDestination: String = Screen.ProfileSelection.route,
+    startDestination: String = Screen.Home.route,
     preloadedCategories: List<Category> = emptyList(),
     preloadedHeroItem: MediaItem? = null,
     preloadedHeroLogoUrl: String? = null,
@@ -149,14 +143,14 @@ fun AppNavigation(
                 },
                 onSwitchProfile = {
                     onSwitchProfile()
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
+                    // HomeScreen handles profile overlay internally — no navigation needed.
+                    // Clearing the active profile causes currentProfile → null,
+                    // which makes HomeScreen show ProfileSelectionScreen as an overlay.
                 },
                 onExitApp = onExitApp
             )
         }
-        
+
         // Search screen
         composable(Screen.Search.route) {
             SearchScreen(
@@ -170,9 +164,7 @@ fun AppNavigation(
                 onNavigateToSettings = { navigateTopLevel(Screen.Settings.route) },
                 onSwitchProfile = {
                     onSwitchProfile()
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
+                    navController.popBackStack(Screen.Home.route, inclusive = false)
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -191,9 +183,7 @@ fun AppNavigation(
                 onNavigateToSettings = { navigateTopLevel(Screen.Settings.route) },
                 onSwitchProfile = {
                     onSwitchProfile()
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
+                    navController.popBackStack(Screen.Home.route, inclusive = false)
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -209,9 +199,7 @@ fun AppNavigation(
                 onNavigateToSettings = { navigateTopLevel(Screen.Settings.route) },
                 onSwitchProfile = {
                     onSwitchProfile()
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
+                    navController.popBackStack(Screen.Home.route, inclusive = false)
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -227,25 +215,14 @@ fun AppNavigation(
                 onNavigateToWatchlist = { navigateTopLevel(Screen.Watchlist.route) },
                 onSwitchProfile = {
                     onSwitchProfile()
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
+                    navController.popBackStack(Screen.Home.route, inclusive = false)
                 },
                 onBack = { navController.popBackStack() }
             )
         }
 
-        // Profile selection screen
-        composable(Screen.ProfileSelection.route) {
-            ProfileSelectionScreen(
-                onProfileSelected = {
-                    navController.navigate(Screen.Home.route) {
-                        popUpTo(Screen.ProfileSelection.route) { inclusive = true }
-                    }
-                },
-                onShowAddProfile = { /* Handled internally by ProfileSelectionScreen */ }
-            )
-        }
+        // Profile selection is now handled as an overlay within HomeScreen.
+        // No separate navigation destination needed.
 
         // Details screen
         composable(
@@ -310,14 +287,12 @@ fun AppNavigation(
                 },
                 onSwitchProfile = {
                     onSwitchProfile()
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
+                    navController.popBackStack(Screen.Home.route, inclusive = false)
                 },
                 onBack = { navController.popBackStack() }
             )
         }
-        
+
         // Player screen
         composable(
             route = Screen.Player.route,

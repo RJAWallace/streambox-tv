@@ -312,9 +312,9 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    // ─── Activity-scoped lifecycle ──────────────────────────────────────────
-    // HomeViewModel is now scoped to the Activity (not the composable).
-    // It is created ONCE and reused across profile switches.
+    // ─── Profile-aware lifecycle ─────────────────────────────────────────────
+    // HomeScreen is the NavHost startDestination and never leaves the back stack.
+    // HomeViewModel is created ONCE at app launch and reused across profile switches.
     // init{} sets up long-lived observers; profile-specific loading
     // is triggered by ensureLoadedForProfile().
 

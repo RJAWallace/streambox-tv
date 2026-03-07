@@ -100,6 +100,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.arflix.tv.ArvioLoadingScreen
+import com.arflix.tv.ui.screens.profile.ProfileSelectionScreen
 import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
@@ -210,9 +211,7 @@ private fun getFocusedItem(categories: List<Category>, rowIndex: Int, itemIndex:
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    viewModel: HomeViewModel = hiltViewModel(
-        viewModelStoreOwner = LocalContext.current as androidx.activity.ComponentActivity
-    ),
+    viewModel: HomeViewModel = hiltViewModel(),
     preloadedCategories: List<Category> = emptyList(),
     preloadedHeroItem: MediaItem? = null,
     preloadedHeroLogoUrl: String? = null,
@@ -227,9 +226,9 @@ fun HomeScreen(
     onSwitchProfile: () -> Unit = {},
     onExitApp: () -> Unit = {}
 ) {
-    // ── Activity-scoped ViewModel: detect profile changes and trigger reload ──
-    // This is the Netflix/Disney+ pattern: ViewModel lives forever,
-    // profile switch = reload data in place (no screen destruction).
+    // ── Detect profile changes and trigger data reload ──
+    // HomeScreen is the startDestination and lives forever.
+    // Profile switch = reload data in place (Netflix/Disney+ pattern).
     LaunchedEffect(currentProfile?.id) {
         val profileId = currentProfile?.id ?: return@LaunchedEffect
         viewModel.ensureLoadedForProfile(profileId)
@@ -247,6 +246,28 @@ fun HomeScreen(
         }
     }
     val uiState by viewModel.uiState.collectAsState()
+
+    // ── PROFILE SELECTION OVERLAY ──────────────────────────────────────
+    // When no active profile is set, show the profile selection screen
+    // as a full-screen overlay. HomeViewModel stays alive underneath.
+    // This eliminates the navigation-triggered crash: no screen destruction,
+    // no ViewModel recreation, no cast issues. Profile selection is just
+    // a UI layer on top of the already-initialized Home.
+    if (currentProfile == null) {
+        ProfileSelectionScreen(
+            onProfileSelected = {
+                // No navigation needed — the activeProfile flow update
+                // causes currentProfile to change, which automatically
+                // hides this overlay and shows the loading screen.
+            },
+            onShowAddProfile = {}
+        )
+        return
+    }
+
+    // ── PROFILE-SCOPED CONTENT ─────────────────────────────────────────
+    // Everything below only renders when a profile is active.
+
     // Performance: Directly collect StateFlow instead of syncing to mutableStateMapOf
     // This avoids O(n) iteration on every logo cache update
     val cardLogoUrls by viewModel.cardLogoUrls.collectAsState()
@@ -266,8 +287,9 @@ fun HomeScreen(
     var pendingFocusResetOnResume by remember { mutableStateOf(false) }
 
     // Use rememberSaveable to persist focus position across navigation (back from details page)
-    // Declared early so ON_RESUME handler can access it for CW reset.
-    val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
+    // Key on currentProfile.id to get fresh state per profile (prevents stale focus from profile A
+    // bleeding into profile B which may have different categories/item counts).
+    val focusState = rememberSaveable(currentProfile?.id, saver = HomeFocusState.Saver) { HomeFocusState() }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
