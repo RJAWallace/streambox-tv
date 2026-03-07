@@ -210,7 +210,9 @@ private fun getFocusedItem(categories: List<Category>, rowIndex: Int, itemIndex:
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    viewModel: HomeViewModel = hiltViewModel(),
+    viewModel: HomeViewModel = hiltViewModel(
+        viewModelStoreOwner = LocalContext.current as androidx.activity.ComponentActivity
+    ),
     preloadedCategories: List<Category> = emptyList(),
     preloadedHeroItem: MediaItem? = null,
     preloadedHeroLogoUrl: String? = null,
@@ -225,6 +227,14 @@ fun HomeScreen(
     onSwitchProfile: () -> Unit = {},
     onExitApp: () -> Unit = {}
 ) {
+    // ── Activity-scoped ViewModel: detect profile changes and trigger reload ──
+    // This is the Netflix/Disney+ pattern: ViewModel lives forever,
+    // profile switch = reload data in place (no screen destruction).
+    LaunchedEffect(currentProfile?.id) {
+        val profileId = currentProfile?.id ?: return@LaunchedEffect
+        viewModel.ensureLoadedForProfile(profileId)
+    }
+
     // Use preloaded data from StartupViewModel if available
     LaunchedEffect(preloadedCategories, preloadedHeroItem, preloadedHeroLogoUrl, preloadedLogoCache) {
         if (preloadedCategories.isNotEmpty()) {

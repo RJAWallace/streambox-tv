@@ -312,9 +312,79 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    init {
-        // Instantly show Continue Watching from disk cache before anything else loads.
-        viewModelScope.launch {
+    // ─── Activity-scoped lifecycle ──────────────────────────────────────────
+    // HomeViewModel is now scoped to the Activity (not the composable).
+    // It is created ONCE and reused across profile switches.
+    // init{} sets up long-lived observers; profile-specific loading
+    // is triggered by ensureLoadedForProfile().
+
+    /** The profile ID that data was last loaded for. */
+    @Volatile
+    private var loadedForProfileId: String? = null
+
+    /** Track all profile-specific jobs so we can cancel them on profile switch. */
+    private var profileLoadJobs = mutableListOf<Job>()
+    private var safetyTimeoutJob: Job? = null
+
+    /**
+     * Called by HomeScreen when the active profile changes.
+     * If the profile is different from what was last loaded, resets state and reloads.
+     * If it's the same profile, does nothing (fast path for back-navigation).
+     */
+    fun ensureLoadedForProfile(profileId: String) {
+        if (loadedForProfileId == profileId) return
+        loadedForProfileId = profileId
+        reloadForNewProfile()
+    }
+
+    /**
+     * Full reset + reload for a new profile. Cancels all in-flight work,
+     * resets UI state to loading, then starts fresh data loading.
+     * This is the Netflix/Disney+ pattern: same ViewModel, fresh data.
+     */
+    private fun reloadForNewProfile() {
+        // Cancel all profile-specific work
+        profileLoadJobs.forEach { it.cancel() }
+        profileLoadJobs.clear()
+        loadHomeJob?.cancel()
+        refreshContinueWatchingJob?.cancel()
+        heroUpdateJob?.cancel()
+        prefetchJob?.cancel()
+        preloadCategoryJob?.cancel()
+        preloadCategoryPriorityJob?.cancel()
+        customCatalogsJob?.cancel()
+        safetyTimeoutJob?.cancel()
+
+        // Reset profile-specific caches
+        lastContinueWatchingItems = emptyList()
+        lastContinueWatchingUpdateMs = 0L
+        lastResolvedBaseCategories = emptyList()
+        usedPreloadedData = false
+        synchronized(logoCacheLock) { logoCache.clear(); logoCacheRevision = 0L; lastPublishedLogoCacheRevision = -1L }
+        logoFetchInFlight.clear()
+        heroDetailsCache.clear()
+        savedCatalogById.clear()
+        categoryPaginationStates.clear()
+        preloadedRequests.clear()
+        pendingHeroLoadKey = null
+        currentRowIndex = 0
+        currentItemIndex = 0
+
+        // Reset UI state to show loading screen
+        _uiState.value = HomeUiState()
+        _cardLogoUrls.value = emptyMap()
+
+        // Start profile-specific loading
+        startProfileDataLoad()
+    }
+
+    /**
+     * Loads all profile-specific data: CW from cache, categories, watchlist, etc.
+     * Each launch is tracked so it can be cancelled on profile switch.
+     */
+    private fun startProfileDataLoad() {
+        // 1. Load Continue Watching from disk cache immediately
+        profileLoadJobs += viewModelScope.launch {
             try {
                 val cached = traktRepository.preloadContinueWatchingCache()
                 if (cached.isNotEmpty()) {
@@ -335,41 +405,38 @@ class HomeViewModel @Inject constructor(
             } catch (e: Exception) {
                 System.err.println("HomeVM: preload CW cache failed: ${e.message}")
             }
-            // Mark CW check complete so HomeScreen can render immediately
-            // without showing trending first then scrolling up to CW
             _uiState.value = _uiState.value.copy(cwCheckComplete = true)
             markInitialDataReadyIfComplete()
         }
+
+        // 2. Load home categories (the big one)
         loadHomeData()
-        // Refresh Continue Watching from Supabase after initial load settles.
-        // Delay avoids rapid state churn (preload + loadHomeData + refresh all at once).
-        viewModelScope.launch {
+
+        // 3. Refresh CW from Supabase after initial load settles
+        profileLoadJobs += viewModelScope.launch {
             delay(3000L)
-            try {
-                refreshContinueWatchingOnly()
-            } catch (e: Exception) {
-                System.err.println("HomeVM: initial CW refresh failed: ${e.message}")
-            }
+            try { refreshContinueWatchingOnly() }
+            catch (e: Exception) { System.err.println("HomeVM: initial CW refresh failed: ${e.message}") }
         }
-        // Also refresh when Trakt auth completes (if user is logged into Trakt)
-        viewModelScope.launch {
+
+        // 4. Refresh CW when Trakt auth completes
+        profileLoadJobs += viewModelScope.launch {
             try {
                 traktRepository.isAuthenticated.filter { it }.first()
                 refreshContinueWatchingOnly()
             } catch (_: Exception) { }
         }
-        viewModelScope.launch {
+
+        // 5. Pre-warm watchlist cache
+        profileLoadJobs += viewModelScope.launch {
             try {
-                traktSyncService.syncEvents.collect { status ->
-                    if (status == SyncStatus.COMPLETED) {
-                        refreshContinueWatchingOnly()
-                    }
-                }
-            } catch (_: Exception) { }
+                watchlistRepository.getWatchlistItems()
+                watchlistRepository.pullWatchlistFromCloud()
+            } catch (_: Exception) {}
         }
-        // Safety timeout: if initialDataReady hasn't been set after 8 seconds,
-        // force it to prevent the loading screen from showing forever.
-        viewModelScope.launch {
+
+        // 6. Safety timeout — force-show home after 8s no matter what
+        safetyTimeoutJob = viewModelScope.launch {
             delay(8000L)
             if (!_uiState.value.initialDataReady) {
                 System.err.println("HomeVM: Safety timeout — forcing initialDataReady after 8s")
@@ -380,20 +447,24 @@ class HomeViewModel @Inject constructor(
                 )
             }
         }
-        // Pre-warm watchlist cache so Watchlist tab opens instantly without "empty" flash
+    }
+
+    init {
+        // ── ONE-TIME OBSERVERS (survive profile switches) ──
+        // These are long-lived collectors that never need to restart.
+
+        // Sync events → refresh CW when Trakt sync completes
         viewModelScope.launch {
             try {
-                watchlistRepository.getWatchlistItems()
-                watchlistRepository.pullWatchlistFromCloud()
-            } catch (_: Exception) {}
+                traktSyncService.syncEvents.collect { status ->
+                    if (status == SyncStatus.COMPLETED) {
+                        refreshContinueWatchingOnly()
+                    }
+                }
+            } catch (_: Exception) { }
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            // Warm IPTV/EPG in background shortly after app start so TV page opens with data.
-            delay(if (isLowRamDevice) 6000L else 2500L)
-            runCatching {
-                iptvRepository.warmupFromCacheOnly()
-            }
-        }
+
+        // Catalog changes → reload home data when user adds/removes/reorders catalogs
         viewModelScope.launch {
             try {
                 catalogRepository.observeCatalogs()
@@ -401,13 +472,19 @@ class HomeViewModel @Inject constructor(
                         catalogs.joinToString("|") { "${it.id}:${it.title}:${it.sourceUrl.orEmpty()}" }
                     }
                     .distinctUntilChanged()
-                    .drop(1) // Skip first emission (startup) to avoid cancelling the initial loadHomeData
-                    .collect {
-                        // Apply catalog reorder/add/remove immediately on Home.
-                        loadHomeData()
-                    }
+                    .drop(1)
+                    .collect { loadHomeData() }
             } catch (_: Exception) { }
         }
+
+        // IPTV warmup (one-time, low priority)
+        viewModelScope.launch(Dispatchers.IO) {
+            delay(if (isLowRamDevice) 6000L else 2500L)
+            runCatching { iptvRepository.warmupFromCacheOnly() }
+        }
+
+        // NOTE: No profile-specific loading here!
+        // ensureLoadedForProfile() triggers startProfileDataLoad() when the profile is known.
     }
 
     /**
