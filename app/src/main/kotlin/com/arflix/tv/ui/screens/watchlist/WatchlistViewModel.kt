@@ -84,17 +84,21 @@ class WatchlistViewModel @Inject constructor(
 
             // Show local items as soon as they're ready
             val localItems = localJob.await()
-            if (localItems != null) {
+            if (localItems != null && localItems.isNotEmpty()) {
                 _uiState.value = WatchlistUiState(
                     isLoading = false,
                     items = localItems
                 )
-            } else if (_uiState.value.items.isEmpty()) {
+            }
+            // Don't show empty state yet — wait for cloud pull to finish first
+
+            // Cloud pull completes; StateFlow observer handles UI updates
+            cloudJob.await()
+
+            // Now if still empty after both loads, it's genuinely empty
+            if (_uiState.value.items.isEmpty()) {
                 _uiState.value = _uiState.value.copy(isLoading = false)
             }
-
-            // Cloud pull completes in background; StateFlow observer handles UI updates
-            cloudJob.await()
         }
     }
 

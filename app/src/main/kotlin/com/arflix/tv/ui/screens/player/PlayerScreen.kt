@@ -1027,9 +1027,9 @@ fun PlayerScreen(
                 // Also update outro timing in case skip intervals loaded after initial fetch
                 viewModel.updateOutroFromIntervals()
                 // Fallback: if no outro data and duration is known, trigger overlay
-                // ~90 seconds before the end (approximate credits start)
+                // ~35 seconds before the end (conservative — most credits are 30-90s)
                 if (uiState.outroStartMs == null && duration > 180_000L) {
-                    viewModel.setFallbackOutroMs(duration - 90_000L)
+                    viewModel.setFallbackOutroMs(duration - 35_000L)
                 }
             }
             val rawDuration = exoPlayer.duration
@@ -1655,7 +1655,7 @@ fun PlayerScreen(
                 seasonNumber = seasonNumber,
                 episodeNumber = episodeNumber + 1,
                 episodeImage = uiState.nextEpisodeThumbnail,
-                countdownSeconds = 10,
+                countdownSeconds = 15,
                 externalFocusedButton = nextEpisodeOverlayFocusedButton,
                 onPlayNext = {
                     viewModel.dismissNextEpisodeOverlay()

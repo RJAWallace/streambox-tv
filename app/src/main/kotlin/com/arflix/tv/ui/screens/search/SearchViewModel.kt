@@ -21,6 +21,7 @@ import javax.inject.Inject
 data class SearchUiState(
     val query: String = "",
     val isLoading: Boolean = false,
+    val hasSearched: Boolean = false,
     val results: List<MediaItem> = emptyList(),
     val movieResults: List<MediaItem> = emptyList(),
     val tvResults: List<MediaItem> = emptyList(),
@@ -125,6 +126,7 @@ class SearchViewModel @Inject constructor(
 
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
+                    hasSearched = true,
                     results = sortedResults,
                     movieResults = movies,
                     tvResults = tvShows,
@@ -133,6 +135,7 @@ class SearchViewModel @Inject constructor(
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
+                    hasSearched = true,
                     error = e.message
                 )
             }

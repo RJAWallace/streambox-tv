@@ -615,13 +615,35 @@ private fun GlassyStreamCard(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Tags Row
+            // Tags Row — full quality tags (resolution, Blu-ray, HDR, DV, audio, codec, RD)
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Quality badge
-                CompactQualityBadge(stream.quality)
+                val tagInfo = remember(stream) {
+                    buildString {
+                        append(stream.quality); append(' '); append(stream.source)
+                        stream.behaviorHints?.filename?.let { append(' '); append(it) }
+                    }.uppercase()
+                }
+                val isCached = stream.behaviorHints?.cached == true
+                val tags = remember(tagInfo, isCached) { parseStreamQualityTags(tagInfo, isCached) }
+                tags.forEach { tag ->
+                    Box(
+                        modifier = Modifier
+                            .background(tag.color.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text(
+                            text = tag.label,
+                            style = ArflixTypography.caption.copy(
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Black
+                            ),
+                            color = tag.color
+                        )
+                    }
+                }
 
                 // Size
                 if (stream.size.isNotEmpty()) {
@@ -765,6 +787,58 @@ private fun CompactQualityBadge(quality: String) {
             }
         }
     }
+}
+
+// Data class for quality tags in stream list
+private data class StreamQualityTag(val label: String, val color: Color)
+
+/**
+ * Parse quality tags from stream info string.
+ * Same logic as PlayerScreen's parseQualityTags — resolution, Blu-ray, HDR, DV, audio, codec, RD.
+ */
+private fun parseStreamQualityTags(info: String, isCached: Boolean = false): List<StreamQualityTag> {
+    val tags = mutableListOf<StreamQualityTag>()
+    when {
+        "4K" in info || "2160" in info -> tags.add(StreamQualityTag("4K", Color(0xFFE53935)))
+        "1080" in info -> tags.add(StreamQualityTag("1080p", Color(0xFF1E88E5)))
+        "720" in info -> tags.add(StreamQualityTag("720p", Color(0xFF43A047)))
+        "480" in info -> tags.add(StreamQualityTag("480p", Color(0xFF757575)))
+    }
+    if ("BLURAY" in info || "BLU-RAY" in info || "BDREMUX" in info || "BDRIP" in info || "REMUX" in info) {
+        tags.add(StreamQualityTag("Blu-ray", Color(0xFF1565C0)))
+    }
+    when {
+        "HDR10+" in info || "HDR10PLUS" in info -> tags.add(StreamQualityTag("HDR10+", Color(0xFFFFA000)))
+        "HDR10" in info -> tags.add(StreamQualityTag("HDR10", Color(0xFFFFA000)))
+        "HDR" in info -> tags.add(StreamQualityTag("HDR", Color(0xFFFFA000)))
+    }
+    if ("DV" in info || "DOLBY VISION" in info || "DOLBYVISION" in info || "DVHE" in info) {
+        tags.add(StreamQualityTag("DV", Color(0xFF7B1FA2)))
+    }
+    if ("ATMOS" in info) {
+        tags.add(StreamQualityTag("Atmos", Color(0xFF0277BD)))
+    } else if ("TRUEHD" in info || "TRUE HD" in info) {
+        tags.add(StreamQualityTag("TrueHD", Color(0xFF0277BD)))
+    } else if ("DTS-HD" in info || "DTSHD" in info || "DTS.HD" in info) {
+        tags.add(StreamQualityTag("DTS-HD", Color(0xFF0277BD)))
+    } else if ("DDP" in info || "DD+" in info || "DOLBY DIGITAL+" in info || "E-AC-3" in info || "EAC3" in info) {
+        tags.add(StreamQualityTag("DD+", Color(0xFF0277BD)))
+    } else if ("DD5.1" in info || "DOLBY DIGITAL" in info || "AC3" in info || "AC-3" in info) {
+        tags.add(StreamQualityTag("DD", Color(0xFF0277BD)))
+    }
+    if ("HEVC" in info || "H265" in info || "H.265" in info || "X265" in info) {
+        tags.add(StreamQualityTag("HEVC", Color(0xFF546E7A)))
+    } else if ("AV1" in info) {
+        tags.add(StreamQualityTag("AV1", Color(0xFF546E7A)))
+    }
+    if (isCached) {
+        tags.add(StreamQualityTag("RD", Color(0xFF2E7D32)))
+    }
+    if (tags.isEmpty()) {
+        val fallback = info.trim().take(10)
+        if (fallback.isNotEmpty()) tags.add(StreamQualityTag(fallback, Color(0xFFE91E63)))
+    }
+    return tags
 }
 
 // Helper function to get size in bytes for sorting

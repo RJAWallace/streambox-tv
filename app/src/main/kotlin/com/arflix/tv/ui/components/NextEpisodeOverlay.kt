@@ -253,14 +253,14 @@ fun NextEpisodeOverlay(
                                 Icon(
                                     imageVector = Icons.Default.PlayArrow,
                                     contentDescription = null,
-                                    tint = if (focusedButton == 0) Color.White else Color.White,
+                                    tint = if (focusedButton == 0) Color.Black else Color.White,
                                     modifier = Modifier.size(24.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "PLAY NOW",
                                     style = ArflixTypography.button,
-                                    color = if (focusedButton == 0) Color.White else Color.White
+                                    color = if (focusedButton == 0) Color.Black else Color.White
                                 )
                             }
                         }

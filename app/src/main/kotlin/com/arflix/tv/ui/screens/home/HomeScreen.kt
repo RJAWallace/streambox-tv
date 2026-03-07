@@ -355,7 +355,12 @@ fun HomeScreen(
             // On initial launch the user is at row 0 and wants to see CW — keep them there.
             if (focusState.currentRowIndex > 0) {
                 focusState.currentRowIndex = (focusState.currentRowIndex + 1)
-                    .coerceAtMost((displayCategories.size - 1).coerceAtLeast(0))
+                    .coerceIn(0, (displayCategories.size - 1).coerceAtLeast(0))
+                // Validate item index for the shifted row
+                val maxItems = displayCategories.getOrNull(focusState.currentRowIndex)?.items?.size ?: 0
+                if (maxItems > 0 && focusState.currentItemIndex >= maxItems) {
+                    focusState.currentItemIndex = maxItems - 1
+                }
                 val shifted = focusState.rowItemIndices.entries.associate { (k, v) -> (k + 1) to v }
                 focusState.rowItemIndices.clear()
                 focusState.rowItemIndices.putAll(shifted)
@@ -941,9 +946,10 @@ private fun HomeInputLayer(
         if (hasProfile) focusState.sidebarFocusIndex = 2
     }
 
-    LaunchedEffect(categories) {
-        val boundedRow = focusState.currentRowIndex.coerceIn(0, (categories.size - 1).coerceAtLeast(0))
-        focusState.currentRowIndex = boundedRow
+    // Synchronous bounds coercion — runs BEFORE key events, not async like LaunchedEffect
+    if (categories.isNotEmpty()) {
+        val boundedRow = focusState.currentRowIndex.coerceIn(0, categories.size - 1)
+        if (boundedRow != focusState.currentRowIndex) focusState.currentRowIndex = boundedRow
         val maxItems = categories.getOrNull(boundedRow)?.items?.size ?: 0
         if (maxItems > 0 && focusState.currentItemIndex > maxItems - 1) {
             focusState.currentItemIndex = maxItems - 1
@@ -958,6 +964,10 @@ private fun HomeInputLayer(
             .onPreviewKeyEvent { event ->
                 if (isContextMenuOpen) {
                     return@onPreviewKeyEvent false
+                }
+                // Guard: consume key events when categories are still loading
+                if (categories.isEmpty() && !focusState.isSidebarFocused) {
+                    return@onPreviewKeyEvent true
                 }
                 when (event.type) {
                     KeyEventType.KeyDown -> when (event.key) {
@@ -1001,7 +1011,7 @@ private fun HomeInputLayer(
                                 focusState.sidebarFocusIndex = (focusState.sidebarFocusIndex - 1).coerceIn(0, maxSidebarIndex)
                                 focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                                 true
-                            } else if (!focusState.isSidebarFocused && focusState.currentRowIndex > 0) {
+                            } else if (!focusState.isSidebarFocused && categories.isNotEmpty() && focusState.currentRowIndex > 0) {
                                 // Save current row's item index before moving
                                 focusState.rowItemIndices[focusState.currentRowIndex] = focusState.currentItemIndex
                                 focusState.currentRowIndex--
@@ -1018,7 +1028,7 @@ private fun HomeInputLayer(
                                 focusState.sidebarFocusIndex = (focusState.sidebarFocusIndex + 1).coerceIn(0, maxSidebarIndex)
                                 focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                                 true
-                            } else if (!focusState.isSidebarFocused && focusState.currentRowIndex < categories.size - 1) {
+                            } else if (!focusState.isSidebarFocused && categories.isNotEmpty() && focusState.currentRowIndex < categories.size - 1) {
                                 // Save current row's item index before moving
                                 focusState.rowItemIndices[focusState.currentRowIndex] = focusState.currentItemIndex
                                 focusState.currentRowIndex++

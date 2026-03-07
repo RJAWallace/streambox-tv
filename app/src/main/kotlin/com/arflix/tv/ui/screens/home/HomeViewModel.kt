@@ -327,8 +327,10 @@ class HomeViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(cwCheckComplete = true)
         }
         loadHomeData()
-        // Refresh Continue Watching from Supabase immediately (no Trakt auth needed)
+        // Refresh Continue Watching from Supabase after initial load settles.
+        // Delay avoids rapid state churn (preload + loadHomeData + refresh all at once).
         viewModelScope.launch {
+            delay(3000L)
             try {
                 refreshContinueWatchingOnly()
             } catch (e: Exception) {
@@ -990,6 +992,9 @@ class HomeViewModel @Inject constructor(
                     val latestCategories = _uiState.value.categories.toMutableList()
                     val continueWatchingIndex = latestCategories.indexOfFirst { it.id == "continue_watching" }
                     if (continueWatchingIndex >= 0) {
+                        // Skip update if CW items haven't actually changed (avoids recomposition)
+                        val existingItems = latestCategories[continueWatchingIndex].items
+                        if (existingItems == continueWatchingCategory.items) return@launch
                         latestCategories[continueWatchingIndex] = continueWatchingCategory
                     } else {
                         latestCategories.add(0, continueWatchingCategory)

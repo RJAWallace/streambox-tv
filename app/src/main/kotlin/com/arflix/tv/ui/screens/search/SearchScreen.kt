@@ -353,7 +353,7 @@ fun SearchScreen(
                     ) {
                         LoadingIndicator(color = Pink, size = 64.dp)
                     }
-                } else if (uiState.movieResults.isEmpty() && uiState.tvResults.isEmpty() && uiState.query.isNotEmpty()) {
+                } else if (uiState.hasSearched && uiState.movieResults.isEmpty() && uiState.tvResults.isEmpty() && uiState.query.isNotEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
