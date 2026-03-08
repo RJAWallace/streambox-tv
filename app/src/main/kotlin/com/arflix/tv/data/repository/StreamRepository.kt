@@ -467,7 +467,10 @@ class StreamRepository @Inject constructor(
     suspend fun fetchCatalogUrl(url: String): StremioCatalogResponse =
         withContext(Dispatchers.IO) {
             runCatching { streamApi.getAddonCatalog(url) }
-                .getOrElse { StremioCatalogResponse(metas = emptyList()) }
+                .getOrElse { e ->
+                    System.err.println("[AI-Search] fetchCatalogUrl FAILED: ${e.javaClass.simpleName}: ${e.message}")
+                    StremioCatalogResponse(metas = emptyList())
+                }
         }
 
     suspend fun getAddonCatalogPage(

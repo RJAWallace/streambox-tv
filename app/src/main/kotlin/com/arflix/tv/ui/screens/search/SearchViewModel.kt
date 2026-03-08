@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.repository.MediaRepository
+import com.arflix.tv.util.RemoteCrashLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -26,7 +28,9 @@ data class SearchUiState(
     val movieResults: List<MediaItem> = emptyList(),
     val tvResults: List<MediaItem> = emptyList(),
     val cardLogoUrls: Map<String, String> = emptyMap(),
-    val error: String? = null
+    val error: String? = null,
+    /** Which search engine produced the current results: "AI" or "TMDB" */
+    val searchMethod: String = ""
 )
 
 @HiltViewModel
@@ -66,21 +70,49 @@ class SearchViewModel @Inject constructor(
 
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+            _uiState.value = _uiState.value.copy(isLoading = true, error = null, searchMethod = "")
 
             try {
                 // Primary: AI Search (better relevance and ordering)
                 // Fallback: TMDB search if AI search returns nothing
-                val aiResults = runCatching { mediaRepository.searchAI(query) }.getOrElse { emptyList() }
+                var searchMethod = "AI"
+
+                // IMPORTANT: Don't use runCatching in coroutines — it swallows
+                // CancellationException which breaks structured concurrency.
+                var aiResults: List<MediaItem> = emptyList()
+                var aiError: Throwable? = null
+                try {
+                    aiResults = mediaRepository.searchAI(query)
+                } catch (ce: CancellationException) {
+                    throw ce // Always rethrow cancellation
+                } catch (e: Exception) {
+                    aiResults = emptyList()
+                    aiError = e
+                    System.err.println("[Search] AI search failed: ${e.javaClass.simpleName}: ${e.message}")
+                    // Only log real errors to Supabase, not cancellations
+                    RemoteCrashLogger.error("Search", "AI search failed for '$query': ${e.message}", e)
+                }
+
                 val results = if (aiResults.isNotEmpty()) {
-                    // AI search returns well-ordered results — keep the addon's ordering.
-                    // Supplement with TMDB results for items AI might have missed.
-                    val tmdbResults = runCatching { mediaRepository.search(query) }.getOrElse { emptyList() }
+                    // AI search returned results — keep the addon's ordering.
+                    // Run TMDB in parallel to supplement with items AI might miss.
+                    val tmdbResults = try {
+                        mediaRepository.search(query)
+                    } catch (ce: CancellationException) { throw ce }
+                    catch (_: Exception) { emptyList() }
+
                     val aiIds = aiResults.map { "${it.mediaType.name}-${it.id}" }.toSet()
                     val extraTmdb = tmdbResults.filter { "${it.mediaType.name}-${it.id}" !in aiIds }
+                    RemoteCrashLogger.checkpoint("Search", "AI OK: ${aiResults.size} AI + ${extraTmdb.size} TMDB for '$query'")
                     aiResults + extraTmdb
                 } else {
-                    // AI search unavailable — fall back to TMDB with smart sorting
+                    // AI search unavailable or empty — fall back to TMDB
+                    searchMethod = "TMDB"
+                    if (aiError != null) {
+                        RemoteCrashLogger.error("Search", "Falling back to TMDB for '$query'", aiError)
+                    } else {
+                        RemoteCrashLogger.checkpoint("Search", "AI returned 0 results, using TMDB for '$query'")
+                    }
                     val tmdbResults = mediaRepository.search(query)
                     val queryLower = query.lowercase()
                     tmdbResults.sortedWith(
@@ -115,8 +147,10 @@ class SearchViewModel @Inject constructor(
                     topForLogos.map { item ->
                         async {
                             val key = "${item.mediaType}_${item.id}"
-                            val logo = runCatching { mediaRepository.getLogoUrl(item.mediaType, item.id) }
-                                .getOrNull()
+                            val logo = try {
+                                mediaRepository.getLogoUrl(item.mediaType, item.id)
+                            } catch (ce: CancellationException) { throw ce }
+                            catch (_: Exception) { null }
                             if (logo.isNullOrBlank()) null else key to logo
                         }
                     }.awaitAll().filterNotNull().toMap()
@@ -128,13 +162,17 @@ class SearchViewModel @Inject constructor(
                     results = results,
                     movieResults = movies,
                     tvResults = tvShows,
-                    cardLogoUrls = logoMap
+                    cardLogoUrls = logoMap,
+                    searchMethod = searchMethod
                 )
+            } catch (ce: CancellationException) {
+                throw ce // Propagate cancellation properly
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     hasSearched = true,
-                    error = e.message
+                    error = e.message,
+                    searchMethod = "ERROR"
                 )
             }
         }

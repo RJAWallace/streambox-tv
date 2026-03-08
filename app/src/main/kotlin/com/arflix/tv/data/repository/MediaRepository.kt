@@ -1141,33 +1141,31 @@ class MediaRepository @Inject constructor(
      * Returns better-ordered, semantically relevant results (e.g. "jurassic" returns
      * all Jurassic Park/World films in order). Falls back to empty list on failure.
      *
-     * Results come with IMDB IDs which are resolved to TMDB IDs in parallel.
+     * Uses OkHttp directly (not Retrofit) to avoid URL re-encoding issues with the
+     * Stremio addon path format (search=query.json).
      */
     suspend fun searchAI(query: String): List<MediaItem> {
         val baseUrl = AI_SEARCH_BASE_URL
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val encodedQuery = URLEncoder.encode(query, "UTF-8").replace("+", "%20")
 
-        // Fetch movie and series results in parallel
+        val movieUrl = "$baseUrl/catalog/movie/aisearch.top/search=$encodedQuery.json"
+        val seriesUrl = "$baseUrl/catalog/series/aisearch.top/search=$encodedQuery.json"
+
+        // Fetch movie and series results in parallel using OkHttp directly
         val (movieMetas, seriesMetas) = coroutineScope {
-            val movies = async {
-                streamRepository.fetchCatalogUrl(
-                    "$baseUrl/catalog/movie/aisearch.top/search=$encodedQuery.json"
-                )
-            }
-            val series = async {
-                streamRepository.fetchCatalogUrl(
-                    "$baseUrl/catalog/series/aisearch.top/search=$encodedQuery.json"
-                )
-            }
-            val movieResponse = movies.await()
-            val seriesResponse = series.await()
-            (movieResponse.metas ?: movieResponse.items ?: emptyList()) to
-                (seriesResponse.metas ?: seriesResponse.items ?: emptyList())
+            val movies = async { fetchAiCatalog(movieUrl) }
+            val series = async { fetchAiCatalog(seriesUrl) }
+            movies.await() to series.await()
         }
+
+        System.err.println("[AI-Search] query='$query' movies=${movieMetas.size} series=${seriesMetas.size}")
 
         // Combine: movies first, then series (addon returns them well-ordered)
         val allMetas = movieMetas + seriesMetas
-        if (allMetas.isEmpty()) return emptyList()
+        if (allMetas.isEmpty()) {
+            System.err.println("[AI-Search] No results from addon for '$query'")
+            return emptyList()
+        }
 
         // Resolve IMDB IDs to TMDB IDs in parallel (max 6 concurrent)
         val semaphore = Semaphore(6)
@@ -1182,7 +1180,6 @@ class MediaRepository @Inject constructor(
                 async {
                     semaphore.withPermit {
                         val ref = resolveImdbToTmdbRef(imdbId, mediaTypeHint) ?: return@async null
-                        // Build MediaItem from addon data + resolved TMDB ID
                         MediaItem(
                             id = ref.second,
                             title = meta.name ?: "",
@@ -1196,8 +1193,34 @@ class MediaRepository @Inject constructor(
                 }
             }.mapNotNull { it.await() }
         }
+        System.err.println("[AI-Search] Resolved ${items.size}/${allMetas.size} for '$query'")
         cacheItems(items)
         return items
+    }
+
+    /**
+     * Fetch a Stremio AI Search catalog using OkHttp directly.
+     * Bypasses Retrofit to avoid URL re-encoding issues with Stremio path format.
+     */
+    private suspend fun fetchAiCatalog(url: String): List<com.arflix.tv.data.api.StremioMetaPreview> {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url(url).build()
+                val response = okHttpClient.newCall(request).execute()
+                val body = response.body?.string()
+                if (!response.isSuccessful || body.isNullOrBlank()) {
+                    System.err.println("[AI-Search] HTTP ${response.code} for $url body=${body?.take(200)}")
+                    return@withContext emptyList()
+                }
+                val parsed = gson.fromJson(body, com.arflix.tv.data.api.StremioCatalogResponse::class.java)
+                val metas = parsed?.metas ?: parsed?.items ?: emptyList()
+                System.err.println("[AI-Search] Parsed ${metas.size} metas from ${url.substringAfterLast("/catalog/").take(40)}")
+                metas
+            } catch (e: Exception) {
+                System.err.println("[AI-Search] fetchAiCatalog FAILED: ${e.javaClass.simpleName}: ${e.message}")
+                emptyList()
+            }
+        }
     }
 
     /**

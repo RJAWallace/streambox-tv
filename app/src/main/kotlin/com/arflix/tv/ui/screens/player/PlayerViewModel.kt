@@ -391,18 +391,23 @@ class PlayerViewModel @Inject constructor(
 
                 // Auto-select: respect explicit navigation preference, otherwise choose
                 // the most playback-stable stream profile.
+                // Apply quality cap so auto-select never picks 4K when max is 1080p etc.
                 if (mergedStreams.isNotEmpty()) {
+                    val maxThreshold = getMaxQualityThreshold()
                     val preferredFromNavigation = mergedStreams.firstOrNull { s ->
                         val addonMatch = currentPreferredAddonId?.let { s.addonId == it } ?: true
                         val sourceMatch = currentPreferredSourceName?.let { s.source == it } ?: true
-                        addonMatch && sourceMatch
+                        val qualityOk = maxThreshold <= 0 || qualityScore(s.quality) in 0..maxThreshold
+                        addonMatch && sourceMatch && qualityOk
                     } ?: mergedStreams.firstOrNull { s ->
-                        currentPreferredAddonId?.let { s.addonId == it } ?: false
+                        val qualityOk = maxThreshold <= 0 || qualityScore(s.quality) in 0..maxThreshold
+                        currentPreferredAddonId?.let { s.addonId == it } ?: false && qualityOk
                     }
 
                     val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { resolvePreferredAudioLanguage() }
                     val stabilitySelected = pickPreferredStream(mergedStreams, preferredLanguage)
                     val selected = preferredFromNavigation ?: stabilitySelected ?: mergedStreams.first()
+                    System.err.println("[Player] Auto-selected: quality=${selected.quality}, source=${selected.source}, maxThreshold=$maxThreshold")
                     selectStream(selected)
                 }
 
@@ -696,6 +701,27 @@ class PlayerViewModel @Inject constructor(
             normalized == "disable"
     }
 
+    private fun autoPlayMinQualityKey() = stringPreferencesKey("device_auto_play_min_quality")
+
+    /**
+     * Read the user's max quality setting from preferences.
+     * Returns quality score threshold (4=4K, 3=1080p, 2=720p, 0=Any).
+     */
+    private suspend fun getMaxQualityThreshold(): Int {
+        return try {
+            val prefs = context.settingsDataStore.data.first()
+            val raw = prefs[autoPlayMinQualityKey()]?.trim()?.lowercase().orEmpty()
+            when {
+                raw.contains("720") || raw == "hd" -> 2
+                raw.contains("1080") || raw == "fullhd" -> 3
+                raw.contains("4k") || raw.contains("2160") || raw == "uhd" -> 4
+                else -> 0 // "Any" = no cap
+            }
+        } catch (_: Exception) {
+            0
+        }
+    }
+
     private fun qualityScore(quality: String): Int {
         return when {
             quality.contains("4K", ignoreCase = true) || quality.contains("2160p", ignoreCase = true) -> 4
@@ -795,15 +821,33 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private fun pickPreferredStream(
+    private suspend fun pickPreferredStream(
         streams: List<StreamSource>,
         preferredLanguage: String
     ): StreamSource? {
         if (streams.isEmpty()) return null
 
-        // No size filter — legitimate single movies/episodes can be 20-80GB (Blu-ray remux).
+        // Apply the user's max quality setting — same logic as DetailsScreen auto-play.
+        val maxThreshold = getMaxQualityThreshold()
+        val qualityCapped = if (maxThreshold > 0) {
+            // Prefer known-quality streams within the cap
+            val knownCapped = streams.filter { stream ->
+                val score = qualityScore(stream.quality)
+                score in 1..maxThreshold
+            }
+            // Fall back to streams with unknown quality if no known-quality matches.
+            // Don't include streams ABOVE the cap.
+            knownCapped.ifEmpty {
+                streams.filter { qualityScore(it.quality) == 0 }
+            }
+        } else {
+            streams // "Any" = no cap
+        }
+
+        val candidates = qualityCapped.ifEmpty { streams }
+
         // Score by language affinity and quality/size/cached preference.
-        return streams.maxByOrNull { stream ->
+        return candidates.maxByOrNull { stream ->
             val langScore = streamLanguageScore(stream, preferredLanguage)
             val stabilityScore = playbackPriorityScore(stream)
             (langScore * 10_000) + stabilityScore

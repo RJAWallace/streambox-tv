@@ -745,7 +745,35 @@ class HomeViewModel @Inject constructor(
                         } else {
                             updated.add(0, continueWatchingCategory)
                         }
-                        _uiState.value = _uiState.value.copy(categories = updated)
+                        // Update hero to first CW item when CW is at position 0
+                        val cwIsFirst = updated.firstOrNull()?.id == "continue_watching"
+                        val newHero = if (cwIsFirst) continueWatchingCategory.items.firstOrNull() else null
+                        if (newHero != null) {
+                            val heroKey = "${newHero.mediaType}_${newHero.id}"
+                            val heroLogo = getCachedLogo(heroKey)
+                            _uiState.value = _uiState.value.copy(
+                                categories = updated,
+                                heroItem = newHero,
+                                heroLogoUrl = heroLogo
+                            )
+                            // Fetch logo if not cached
+                            if (heroLogo == null) {
+                                launch {
+                                    try {
+                                        val logo = withContext(networkDispatcher) {
+                                            mediaRepository.getLogoUrl(newHero.mediaType, newHero.id)
+                                        }
+                                        if (logo != null && _uiState.value.heroItem?.id == newHero.id) {
+                                            putCachedLogo(heroKey, logo)
+                                            _uiState.value = _uiState.value.copy(heroLogoUrl = logo)
+                                            scheduleLogoCachePublish()
+                                        }
+                                    } catch (_: Exception) {}
+                                }
+                            }
+                        } else {
+                            _uiState.value = _uiState.value.copy(categories = updated)
+                        }
                     }
                 }
               } catch (e: Exception) {
@@ -799,9 +827,13 @@ class HomeViewModel @Inject constructor(
                 }
                 savedCatalogs.forEach { cfg ->
                     val category = if (customIds.contains(cfg.id)) {
-                        loadedById[cfg.id]
-                            ?: existingCustomById[cfg.id]
+                        val loaded = loadedById[cfg.id]
+                        // Prefer loaded data with real items; if loaded but empty, fall
+                        // through to existing data so categories don't flash-disappear.
+                        if (loaded != null && loaded.items.isNotEmpty()) loaded
+                        else existingCustomById[cfg.id]
                             ?: currentState.categories.firstOrNull { it.id == cfg.id }
+                            ?: loaded  // Final fallback: use the empty result to clear placeholders
                     } else {
                         baseById[cfg.id] ?: currentState.categories.firstOrNull { it.id == cfg.id }
                     }
@@ -831,8 +863,16 @@ class HomeViewModel @Inject constructor(
                         limit = initialCategoryItemCap
                     )
                 }.getOrNull()
-                if (firstPage == null || firstPage.items.isEmpty()) {
-                    // Mark as resolved-empty so placeholder rows are removed instead of sticking forever.
+                if (firstPage == null) {
+                    // Load FAILED (network error, timeout, etc.) — preserve any existing data
+                    // so the category doesn't flash-disappear while it still has cached items.
+                    // Don't add to loadedById so publishMerged falls through to existingCustomById.
+                    publishMerged(_uiState.value)
+                    return@forEach
+                }
+                if (firstPage.items.isEmpty()) {
+                    // Load succeeded but returned no items — mark as resolved-empty
+                    // so placeholder rows are removed instead of sticking forever.
                     loadedById[catalog.id] = Category(
                         id = catalog.id,
                         title = catalog.title,
@@ -1090,7 +1130,58 @@ class HomeViewModel @Inject constructor(
                     } else {
                         latestCategories.add(0, continueWatchingCategory)
                     }
-                    _uiState.value = _uiState.value.copy(categories = latestCategories)
+                    // Update hero to first CW item when CW is at position 0
+                    val cwIsFirst = latestCategories.firstOrNull()?.id == "continue_watching"
+                    val newHero = if (cwIsFirst) continueWatchingCategory.items.firstOrNull() else null
+                    if (newHero != null) {
+                        val heroKey = "${newHero.mediaType}_${newHero.id}"
+                        val heroLogo = getCachedLogo(heroKey)
+                        _uiState.value = _uiState.value.copy(
+                            categories = latestCategories,
+                            heroItem = newHero,
+                            heroLogoUrl = heroLogo
+                        )
+                        // Fetch logo if not cached
+                        if (heroLogo == null) {
+                            viewModelScope.launch {
+                                try {
+                                    val logo = withContext(networkDispatcher) {
+                                        mediaRepository.getLogoUrl(newHero.mediaType, newHero.id)
+                                    }
+                                    if (logo != null && _uiState.value.heroItem?.id == newHero.id) {
+                                        putCachedLogo(heroKey, logo)
+                                        _uiState.value = _uiState.value.copy(heroLogoUrl = logo)
+                                        scheduleLogoCachePublish()
+                                        preloadLogoImages(listOf(logo))
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    } else {
+                        _uiState.value = _uiState.value.copy(categories = latestCategories)
+                    }
+
+                    // Prefetch logos for CW items so card overlays render immediately
+                    viewModelScope.launch {
+                        val cwItems = continueWatchingCategory.items.take(initialLogoPrefetchItemsPerRow)
+                        val logoJobs = cwItems.map { item ->
+                            async(networkDispatcher) {
+                                val key = "${item.mediaType}_${item.id}"
+                                if (getCachedLogo(key) != null) return@async null // Already cached
+                                try {
+                                    val logoUrl = mediaRepository.getLogoUrl(item.mediaType, item.id)
+                                    if (logoUrl != null) key to logoUrl else null
+                                } catch (_: Exception) { null }
+                            }
+                        }
+                        val newLogos = logoJobs.awaitAll().filterNotNull().toMap()
+                        if (newLogos.isNotEmpty()) {
+                            if (putCachedLogos(newLogos)) {
+                                publishLogoCacheSnapshotIfChanged()
+                            }
+                            preloadLogoImages(newLogos.values.toList())
+                        }
+                    }
                     refreshWatchedBadges()
                 } else {
                     // No new data from any source

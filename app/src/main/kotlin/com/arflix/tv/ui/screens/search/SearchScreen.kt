@@ -365,6 +365,15 @@ fun SearchScreen(
                         )
                     }
                 } else {
+                    // Search method badge (debug: shows AI or TMDB)
+                    if (uiState.searchMethod.isNotEmpty()) {
+                        Text(
+                            text = "Search: ${uiState.searchMethod}",
+                            style = ArflixTypography.caption,
+                            color = if (uiState.searchMethod == "AI") Color(0xFF4CAF50) else TextSecondary,
+                            modifier = Modifier.padding(start = 16.dp, bottom = 4.dp)
+                        )
+                    }
                     // Movies Row
                     if (uiState.movieResults.isNotEmpty()) {
                         SearchResultRow(
