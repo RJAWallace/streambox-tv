@@ -22,6 +22,7 @@ const ALLOWED_PATHS = [
   '/discover/',
   '/genre/',
   '/person/',
+  '/find/',
   '/watch/providers',
   '/configuration',
 ]

@@ -99,7 +99,11 @@ class MediaRepository @Inject constructor(
     }
 
     private fun cacheAddonImdbLookup(imdbId: String, value: Pair<MediaType, Int>?) {
-        addonImdbToTmdbCache[imdbId] = CacheEntry(value, System.currentTimeMillis())
+        // Only cache successful lookups — don't cache null results from proxy/network
+        // failures so they can be retried on the next search.
+        if (value != null) {
+            addonImdbToTmdbCache[imdbId] = CacheEntry(value, System.currentTimeMillis())
+        }
     }
 
     private fun getAddonTitleLookupEntry(key: String): CacheEntry<Pair<MediaType, Int>?>? {
