@@ -722,22 +722,64 @@ class HomeViewModel @Inject constructor(
                 loadCustomCatalogsIncrementally(allCatalogs)
 
                 // Load Continue Watching from Supabase (primary, syncs across devices)
+                // Two-phase: show un-enriched items immediately (fast), then enrich in background.
                 viewModelScope.launch cw@{
                     if (requestId != loadHomeRequestId) return@cw
-                    val supabaseItems = try {
-                        loadContinueWatchingFromHistory()
+
+                    // Phase 1: Fetch watch history from Supabase (fast network call)
+                    val rawItems = try {
+                        loadContinueWatchingFromHistoryRaw()
                     } catch (_: Exception) { emptyList() }
                     if (requestId != loadHomeRequestId) return@cw
 
+                    // Show un-enriched items immediately so CW row appears without delay
+                    if (rawItems.isNotEmpty()) {
+                        val rawCategory = Category(
+                            id = "continue_watching",
+                            title = "Continue Watching",
+                            items = rawItems.map { it.toMediaItem() }.deduplicateItems()
+                        )
+                        rawCategory.items.forEach { mediaRepository.cacheItem(it) }
+                        lastContinueWatchingItems = rawCategory.items
+                        lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
+                        val rawUpdated = _uiState.value.categories.toMutableList()
+                        val rawIdx = rawUpdated.indexOfFirst { it.id == "continue_watching" }
+                        if (rawIdx >= 0) rawUpdated[rawIdx] = rawCategory else rawUpdated.add(0, rawCategory)
+                        val cwIsFirst = rawUpdated.firstOrNull()?.id == "continue_watching"
+                        val rawHero = if (cwIsFirst) rawCategory.items.firstOrNull() else null
+                        if (rawHero != null) {
+                            val heroKey = "${rawHero.mediaType}_${rawHero.id}"
+                            _uiState.value = _uiState.value.copy(
+                                categories = rawUpdated,
+                                heroItem = rawHero,
+                                heroLogoUrl = getCachedLogo(heroKey)
+                            )
+                        } else {
+                            _uiState.value = _uiState.value.copy(categories = rawUpdated)
+                        }
+                    }
+
+                    // Phase 2: Enrich with TMDB data in background (adds overview, year, rating)
+                    val enrichedItems = try {
+                        if (rawItems.isNotEmpty()) {
+                            traktRepository.enrichContinueWatchingItems(rawItems)
+                        } else emptyList()
+                    } catch (_: Exception) { rawItems }
+                    if (requestId != loadHomeRequestId) return@cw
+
+                    val supabaseItems = enrichedItems.ifEmpty { rawItems }
                     if (supabaseItems.isNotEmpty()) {
+                        val mergedItems = try { mergeContinueWatchingResumeData(supabaseItems) } catch (_: Exception) { supabaseItems }
                         val continueWatchingCategory = Category(
                             id = "continue_watching",
                             title = "Continue Watching",
-                            items = supabaseItems.map { it.toMediaItem() }.deduplicateItems()
+                            items = mergedItems.map { it.toMediaItem() }.deduplicateItems()
                         )
                         continueWatchingCategory.items.forEach { mediaRepository.cacheItem(it) }
                         lastContinueWatchingItems = continueWatchingCategory.items
                         lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
+                        // Persist enriched data to disk so next launch shows all items instantly
+                        try { traktRepository.updateContinueWatchingCache(mergedItems) } catch (_: Exception) {}
                         val updated = _uiState.value.categories.toMutableList()
                         val index = updated.indexOfFirst { it.id == "continue_watching" }
                         if (index >= 0) {
@@ -1120,6 +1162,8 @@ class HomeViewModel @Inject constructor(
                     continueWatchingCategory.items.forEach { mediaRepository.cacheItem(it) }
                     lastContinueWatchingItems = continueWatchingCategory.items
                     lastContinueWatchingUpdateMs = now
+                    // Persist to disk so next app launch shows latest CW instantly
+                    try { traktRepository.updateContinueWatchingCache(mergedContinueWatching) } catch (_: Exception) {}
                     val latestCategories = _uiState.value.categories.toMutableList()
                     val continueWatchingIndex = latestCategories.indexOfFirst { it.id == "continue_watching" }
                     if (continueWatchingIndex >= 0) {
@@ -1225,75 +1269,76 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private suspend fun loadContinueWatchingFromHistory(): List<ContinueWatchingItem> {
-        return try {
-            // Use full watch history (not just in-progress) to find the most recently
-            // touched episode per show. getContinueWatching() only returns in-progress
-            // entries, so if the user's latest episode is completed, it falls back to an
-            // older in-progress one (wrong order). By using getWatchHistory() we ensure
-            // the most recent episode per show is always used.
-            val allEntries = watchHistoryRepository.getWatchHistory()
-            if (allEntries.isEmpty()) return emptyList()
+    /**
+     * Load CW items from watch history WITHOUT enrichment.
+     * Fast: only a single Supabase network call + local mapping.
+     * Items have title/poster/backdrop from watch history but lack overview/year/rating.
+     */
+    private suspend fun loadContinueWatchingFromHistoryRaw(): List<ContinueWatchingItem> {
+        val allEntries = watchHistoryRepository.getWatchHistory()
+        if (allEntries.isEmpty()) return emptyList()
 
-            val threshold = Constants.WATCHED_THRESHOLD / 100f
-            // Group by show, pick the most recent entry per show (already sorted by updated_at desc).
-            val byShow = LinkedHashMap<String, com.arflix.tv.data.repository.WatchHistoryEntry>()
-            for (entry in allEntries) {
-                val key = "${entry.media_type}:${entry.show_tmdb_id}"
-                if (!byShow.containsKey(key)) {
-                    byShow[key] = entry
-                }
+        val threshold = Constants.WATCHED_THRESHOLD / 100f
+        val byShow = LinkedHashMap<String, com.arflix.tv.data.repository.WatchHistoryEntry>()
+        for (entry in allEntries) {
+            val key = "${entry.media_type}:${entry.show_tmdb_id}"
+            if (!byShow.containsKey(key)) {
+                byShow[key] = entry
             }
+        }
 
-            // Include both in-progress entries and completed TV episodes (as "up next").
-            // Movies are only shown if in-progress.
-            val mapped = byShow.values.mapNotNull { entry ->
-                val progress = entry.progress.coerceIn(0f, 1f)
-                val mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE
+        return byShow.values.mapNotNull { entry ->
+            val progress = entry.progress.coerceIn(0f, 1f)
+            val mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE
 
-                // Skip entries with zero progress (never actually started)
-                if (progress <= 0f && entry.position_seconds <= 0L) return@mapNotNull null
+            if (progress <= 0f && entry.position_seconds <= 0L) return@mapNotNull null
 
-                // Completed entry: for TV shows, offer the next episode
-                if (progress >= threshold && progress > 0f) {
-                    if (mediaType == MediaType.TV && entry.season != null && entry.episode != null) {
-                        // Show "Play next episode" with the next episode number
-                        ContinueWatchingItem(
-                            id = entry.show_tmdb_id,
-                            title = entry.title ?: return@mapNotNull null,
-                            mediaType = mediaType,
-                            progress = 0,
-                            resumePositionSeconds = 0L,
-                            durationSeconds = 0L,
-                            season = entry.season,
-                            episode = entry.episode + 1,
-                            episodeTitle = null, // Will be enriched later
-                            backdropPath = entry.backdrop_path,
-                            posterPath = entry.poster_path,
-                            isUpNext = true
-                        )
-                    } else {
-                        // Completed movie — don't show in CW
-                        return@mapNotNull null
-                    }
-                } else {
-                    // In-progress entry — show as "Continue"
+            if (progress >= threshold && progress > 0f) {
+                if (mediaType == MediaType.TV && entry.season != null && entry.episode != null) {
                     ContinueWatchingItem(
                         id = entry.show_tmdb_id,
                         title = entry.title ?: return@mapNotNull null,
                         mediaType = mediaType,
-                        progress = (progress * 100f).toInt().coerceIn(0, 100),
-                        resumePositionSeconds = entry.position_seconds.coerceAtLeast(0L),
-                        durationSeconds = entry.duration_seconds.coerceAtLeast(0L),
+                        progress = 0,
+                        resumePositionSeconds = 0L,
+                        durationSeconds = 0L,
                         season = entry.season,
-                        episode = entry.episode,
-                        episodeTitle = entry.episode_title,
+                        episode = entry.episode + 1,
+                        episodeTitle = null,
                         backdropPath = entry.backdrop_path,
-                        posterPath = entry.poster_path
+                        posterPath = entry.poster_path,
+                        isUpNext = true
                     )
+                } else {
+                    return@mapNotNull null
                 }
+            } else {
+                ContinueWatchingItem(
+                    id = entry.show_tmdb_id,
+                    title = entry.title ?: return@mapNotNull null,
+                    mediaType = mediaType,
+                    progress = (progress * 100f).toInt().coerceIn(0, 100),
+                    resumePositionSeconds = entry.position_seconds.coerceAtLeast(0L),
+                    durationSeconds = entry.duration_seconds.coerceAtLeast(0L),
+                    season = entry.season,
+                    episode = entry.episode,
+                    episodeTitle = entry.episode_title,
+                    backdropPath = entry.backdrop_path,
+                    posterPath = entry.poster_path
+                )
             }
-            traktRepository.enrichContinueWatchingItems(mapped)
+        }
+    }
+
+    /**
+     * Load CW items from watch history WITH TMDB enrichment (adds overview, year, rating).
+     * Slower: Supabase call + parallel TMDB API calls per item.
+     */
+    private suspend fun loadContinueWatchingFromHistory(): List<ContinueWatchingItem> {
+        return try {
+            val raw = loadContinueWatchingFromHistoryRaw()
+            if (raw.isEmpty()) return emptyList()
+            traktRepository.enrichContinueWatchingItems(raw)
         } catch (_: Exception) {
             emptyList()
         }

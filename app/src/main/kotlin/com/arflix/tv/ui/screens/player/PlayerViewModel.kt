@@ -395,50 +395,38 @@ class PlayerViewModel @Inject constructor(
                     error = errorMessage
                 )
 
-                // Auto-select: respect explicit navigation preference, otherwise choose
-                // the most playback-stable stream profile.
-                // Apply quality cap so auto-select never picks 4K when max is 1080p etc.
-                // Filter out non-playable entries (e.g. "Comet sync") from auto-select.
+                // Auto-select: use the EXACT same sort order as the manual sources
+                // list (StreamSelector).  Sort: quality desc → size desc → source
+                // name alphabetical.  Then filter by quality cap and pick option 1.
+                // If that fails, fall back to option 2, 3, etc. — same list, same order.
                 val autoPlayable = mergedStreams.filter { isAutoPlayable(it) }
                 if (autoPlayable.isNotEmpty()) {
-                    val maxThreshold = getMaxQualityThreshold()
-                    val preferredFromNavigation = autoPlayable.firstOrNull { s ->
-                        val addonMatch = currentPreferredAddonId?.let { s.addonId == it } ?: true
-                        val sourceMatch = currentPreferredSourceName?.let { s.source == it } ?: true
-                        val qualityOk = maxThreshold <= 0 || qualityScore(s.quality) in 1..maxThreshold
-                        addonMatch && sourceMatch && qualityOk
-                    } ?: autoPlayable.firstOrNull { s ->
-                        val qualityOk = maxThreshold <= 0 || qualityScore(s.quality) in 1..maxThreshold
-                        currentPreferredAddonId?.let { s.addonId == it } ?: false && qualityOk
+                    // 1. Sort exactly like StreamSelector
+                    val sorted = autoPlayable.sortedWith { a, b ->
+                        val qA = qualityScore(a.quality)
+                        val qB = qualityScore(b.quality)
+                        if (qA != qB) return@sortedWith qB - qA  // Higher quality first
+                        val sA = parseSize(a.size)
+                        val sB = parseSize(b.size)
+                        if (sA != sB) return@sortedWith sB.compareTo(sA)  // Larger size first
+                        a.source.compareTo(b.source)  // Alphabetical tie-break
                     }
 
-                    val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { resolvePreferredAudioLanguage() }
-                    val stabilitySelected = pickPreferredStream(autoPlayable, preferredLanguage)
-                    val selected = preferredFromNavigation ?: stabilitySelected ?: autoPlayable.first()
+                    // 2. Apply quality cap
+                    val maxThreshold = getMaxQualityThreshold()
+                    val capped = if (maxThreshold > 0) {
+                        val withinCap = sorted.filter { qualityScore(it.quality) in 1..maxThreshold }
+                        withinCap.ifEmpty {
+                            // Fall back to unknown-quality streams if nothing matched
+                            sorted.filter { qualityScore(it.quality) == 0 }
+                        }.ifEmpty { sorted }
+                    } else sorted
 
-                    // Build quality-sorted fallback order for auto-advance on playback error.
-                    // IMPORTANT: Apply quality cap to fallback so retries stay within
-                    // the user's max quality (e.g. don't jump to 4K when max is 1080p).
-                    val fallbackCandidates = if (maxThreshold > 0) {
-                        val capped = autoPlayable.filter { s ->
-                            val qs = qualityScore(s.quality)
-                            qs in 1..maxThreshold
-                        }
-                        capped.ifEmpty {
-                            autoPlayable.filter { qualityScore(it.quality) == 0 && isAutoPlayable(it) }
-                        }.ifEmpty { autoPlayable }
-                    } else autoPlayable
+                    // 3. Pick option 1 from the filtered+sorted list
+                    val selected = capped.first()
+                    autoPlayFallbackOrder = capped  // Same list, same order for retries
 
-                    val sortedFallback = fallbackCandidates
-                        .filter { it != selected }
-                        .sortedByDescending { s ->
-                            val langScore = streamLanguageScore(s, preferredLanguage)
-                            val stabilityScore = playbackPriorityScore(s)
-                            (langScore * 10_000) + stabilityScore
-                        }
-                    autoPlayFallbackOrder = listOf(selected) + sortedFallback
-
-                    System.err.println("[Player] Auto-selected: quality=${selected.quality}, size=${selected.size}, source=${selected.source}, maxThreshold=$maxThreshold, fallback=${sortedFallback.size}")
+                    System.err.println("[Player] Auto-selected: quality=${selected.quality}, size=${selected.size}, source=${selected.source}, maxThreshold=$maxThreshold, fallback=${capped.size - 1}")
                     selectStream(selected)
                 } else if (mergedStreams.isNotEmpty()) {
                     // All streams filtered — play first available as last resort

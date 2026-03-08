@@ -1264,6 +1264,17 @@ class TraktRepository @Inject constructor(
 
     fun getCachedContinueWatching(): List<ContinueWatchingItem> = cachedContinueWatching
 
+    /**
+     * Update the in-memory and disk CW cache with freshly resolved items.
+     * Called from HomeViewModel after loadContinueWatchingFromHistory() so the
+     * disk cache stays up-to-date for instant display on next app launch.
+     */
+    suspend fun updateContinueWatchingCache(items: List<ContinueWatchingItem>) {
+        if (items.isEmpty()) return
+        cachedContinueWatching = items
+        persistContinueWatchingCache(items)
+    }
+
     // Cache for preloaded profile data (keyed by profileId)
     private val preloadedProfileCache = ConcurrentHashMap<String, List<ContinueWatchingItem>>()
 
