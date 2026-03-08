@@ -106,6 +106,12 @@ class PlayerViewModel @Inject constructor(
     private var skipIntervals: List<SkipInterval> = emptyList()
     private var lastActiveSkipType: String? = null
 
+    // Quality-sorted fallback order for auto-advance on playback error.
+    // Built during auto-select so retries walk through streams in quality-descending
+    // order (matching the visible sources list) instead of random list position.
+    var autoPlayFallbackOrder: List<StreamSource> = emptyList()
+        private set
+
     private val SCROBBLE_UPDATE_INTERVAL_MS = 20_000L
     private val WATCH_HISTORY_UPDATE_INTERVAL_MS = 15_000L
 
@@ -392,23 +398,41 @@ class PlayerViewModel @Inject constructor(
                 // Auto-select: respect explicit navigation preference, otherwise choose
                 // the most playback-stable stream profile.
                 // Apply quality cap so auto-select never picks 4K when max is 1080p etc.
-                if (mergedStreams.isNotEmpty()) {
+                // Filter out non-playable entries (e.g. "Comet sync") from auto-select.
+                val autoPlayable = mergedStreams.filter { isAutoPlayable(it) }
+                if (autoPlayable.isNotEmpty()) {
                     val maxThreshold = getMaxQualityThreshold()
-                    val preferredFromNavigation = mergedStreams.firstOrNull { s ->
+                    val preferredFromNavigation = autoPlayable.firstOrNull { s ->
                         val addonMatch = currentPreferredAddonId?.let { s.addonId == it } ?: true
                         val sourceMatch = currentPreferredSourceName?.let { s.source == it } ?: true
-                        val qualityOk = maxThreshold <= 0 || qualityScore(s.quality) in 0..maxThreshold
+                        val qualityOk = maxThreshold <= 0 || qualityScore(s.quality) in 1..maxThreshold
                         addonMatch && sourceMatch && qualityOk
-                    } ?: mergedStreams.firstOrNull { s ->
-                        val qualityOk = maxThreshold <= 0 || qualityScore(s.quality) in 0..maxThreshold
+                    } ?: autoPlayable.firstOrNull { s ->
+                        val qualityOk = maxThreshold <= 0 || qualityScore(s.quality) in 1..maxThreshold
                         currentPreferredAddonId?.let { s.addonId == it } ?: false && qualityOk
                     }
 
                     val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { resolvePreferredAudioLanguage() }
-                    val stabilitySelected = pickPreferredStream(mergedStreams, preferredLanguage)
-                    val selected = preferredFromNavigation ?: stabilitySelected ?: mergedStreams.first()
-                    System.err.println("[Player] Auto-selected: quality=${selected.quality}, source=${selected.source}, maxThreshold=$maxThreshold")
+                    val stabilitySelected = pickPreferredStream(autoPlayable, preferredLanguage)
+                    val selected = preferredFromNavigation ?: stabilitySelected ?: autoPlayable.first()
+
+                    // Build quality-sorted fallback order for auto-advance on playback error.
+                    // This ensures retries go through streams in quality-descending order
+                    // (matching the visible sources list) instead of random list order.
+                    val sortedFallback = autoPlayable
+                        .filter { it != selected }
+                        .sortedByDescending { s ->
+                            val langScore = streamLanguageScore(s, preferredLanguage)
+                            val stabilityScore = playbackPriorityScore(s)
+                            (langScore * 10_000) + stabilityScore
+                        }
+                    autoPlayFallbackOrder = listOf(selected) + sortedFallback
+
+                    System.err.println("[Player] Auto-selected: quality=${selected.quality}, size=${selected.size}, source=${selected.source}, maxThreshold=$maxThreshold, fallback=${sortedFallback.size}")
                     selectStream(selected)
+                } else if (mergedStreams.isNotEmpty()) {
+                    // All streams filtered — play first available as last resort
+                    selectStream(mergedStreams.first())
                 }
 
                 // Apply subtitle preference in background (non-blocking)
@@ -733,6 +757,24 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
+     * Returns false for streams that should NEVER be auto-played.
+     * These are addon control/sync entries (e.g. "Comet sync") that aren't real media streams.
+     */
+    private fun isAutoPlayable(stream: StreamSource): Boolean {
+        val combined = buildString {
+            append(stream.source.lowercase())
+            append(' ')
+            append(stream.quality.lowercase())
+            stream.behaviorHints?.filename?.let { append(' '); append(it.lowercase()) }
+        }
+        // Comet sync / refresh entries — not real streams
+        if (combined.contains("sync") && combined.contains("comet")) return false
+        // Any stream whose quality is "UNKNOWN" and has no real URL content
+        if (stream.quality.contains("UNKNOWN", ignoreCase = true) && stream.size.isBlank()) return false
+        return true
+    }
+
+    /**
      * Score streams for auto-selection: prefer best quality, largest size (best encode),
      * and cached Real-Debrid sources. Matches the StreamSelector display order
      * (quality desc → size desc) so auto-play picks the top visible source.
@@ -748,8 +790,11 @@ class PlayerViewModel @Inject constructor(
             }
         }.lowercase()
 
+        val qScore = qualityScore(stream.quality)
+
         // Quality is king — 4K=4000, 1080p=3000, 720p=2000, 480p=1000
-        var score = qualityScore(stream.quality) * 1000
+        // UNKNOWN quality (0) gets a base of 0 so it never beats known quality.
+        var score = qScore * 1000
 
         // PREFER larger files — bigger = better encode quality
         val sizeBytes = parseSize(stream.size)
@@ -765,8 +810,13 @@ class PlayerViewModel @Inject constructor(
         }
 
         // === Bonuses ===
-        // Cached Real-Debrid: massive bonus — instant playback, no torrent wait
-        if (stream.behaviorHints?.cached == true || text.contains(" rd+")) score += 5000
+        // Cached Real-Debrid: bonus for instant playback, no torrent wait.
+        // Only give the full bonus to streams with KNOWN quality so cached UNKNOWN
+        // entries (like "Comet sync") don't jump above real quality-matched streams.
+        val isCached = stream.behaviorHints?.cached == true || text.contains(" rd+")
+        if (isCached) {
+            score += if (qScore > 0) 800 else 100  // Known cached = big bonus; unknown cached = small
+        }
         // HTTP direct streams: prefer over torrent/magnet
         if (!stream.url.isNullOrBlank() && stream.url.startsWith("http", ignoreCase = true)) score += 200
 
@@ -827,26 +877,30 @@ class PlayerViewModel @Inject constructor(
     ): StreamSource? {
         if (streams.isEmpty()) return null
 
+        // Filter out non-playable entries (sync commands, etc.)
+        val playable = streams.filter { isAutoPlayable(it) }.ifEmpty { streams }
+
         // Apply the user's max quality setting — same logic as DetailsScreen auto-play.
         val maxThreshold = getMaxQualityThreshold()
         val qualityCapped = if (maxThreshold > 0) {
-            // Prefer known-quality streams within the cap
-            val knownCapped = streams.filter { stream ->
+            // Prefer known-quality streams within the cap (e.g. 1080p, 720p when max=1080p)
+            val knownCapped = playable.filter { stream ->
                 val score = qualityScore(stream.quality)
                 score in 1..maxThreshold
             }
-            // Fall back to streams with unknown quality if no known-quality matches.
+            // Fall back to streams with unknown quality only if no known-quality matches.
             // Don't include streams ABOVE the cap.
             knownCapped.ifEmpty {
-                streams.filter { qualityScore(it.quality) == 0 }
+                playable.filter { qualityScore(it.quality) == 0 && isAutoPlayable(it) }
             }
         } else {
-            streams // "Any" = no cap
+            playable // "Any" = no cap
         }
 
-        val candidates = qualityCapped.ifEmpty { streams }
+        val candidates = qualityCapped.ifEmpty { playable }
 
         // Score by language affinity and quality/size/cached preference.
+        // Highest quality + largest size wins (matching visible source list order).
         return candidates.maxByOrNull { stream ->
             val langScore = streamLanguageScore(stream, preferredLanguage)
             val stabilityScore = playbackPriorityScore(stream)

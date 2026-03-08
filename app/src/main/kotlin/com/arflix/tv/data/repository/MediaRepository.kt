@@ -1158,10 +1158,13 @@ class MediaRepository @Inject constructor(
             movies.await() to series.await()
         }
 
-        System.err.println("[AI-Search] query='$query' movies=${movieMetas.size} series=${seriesMetas.size}")
+        val logMsg = "[AI-Search] query='$query' movies=${movieMetas.size} series=${seriesMetas.size}"
+        System.err.println(logMsg)
+        com.arflix.tv.util.RemoteCrashLogger.checkpoint("AI-Search", logMsg)
 
         // Combine: movies first, then series (addon returns them well-ordered)
-        val allMetas = movieMetas + seriesMetas
+        // Deduplicate by IMDB ID (series endpoint can return duplicates)
+        val allMetas = (movieMetas + seriesMetas).distinctBy { it.id }
         if (allMetas.isEmpty()) {
             System.err.println("[AI-Search] No results from addon for '$query'")
             return emptyList()
@@ -1201,23 +1204,57 @@ class MediaRepository @Inject constructor(
     /**
      * Fetch a Stremio AI Search catalog using OkHttp directly.
      * Bypasses Retrofit to avoid URL re-encoding issues with Stremio path format.
+     * Uses a fresh OkHttpClient WITHOUT the ApiProxyInterceptor / HTTP cache
+     * to ensure the addon URL is sent exactly as constructed.
      */
     private suspend fun fetchAiCatalog(url: String): List<com.arflix.tv.data.api.StremioMetaPreview> {
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                val request = Request.Builder().url(url).build()
-                val response = okHttpClient.newCall(request).execute()
+                // Use a plain OkHttpClient without interceptors or cache to avoid any
+                // URL rewriting, caching of stale responses, or proxy interference.
+                val plainClient = OkHttpClient.Builder()
+                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                    .followRedirects(true)
+                    .followSslRedirects(true)
+                    .build()
+
+                val request = Request.Builder()
+                    .url(url)
+                    .header("Cache-Control", "no-cache, no-store")
+                    .header("User-Agent", "ARVIO/1.5 (Android TV)")
+                    .build()
+                val response = plainClient.newCall(request).execute()
                 val body = response.body?.string()
-                if (!response.isSuccessful || body.isNullOrBlank()) {
-                    System.err.println("[AI-Search] HTTP ${response.code} for $url body=${body?.take(200)}")
+                val shortUrl = url.substringAfterLast("/catalog/").take(50)
+
+                if (!response.isSuccessful) {
+                    val msg = "[AI-Search] HTTP ${response.code} for $shortUrl body=${body?.take(300)}"
+                    System.err.println(msg)
+                    com.arflix.tv.util.RemoteCrashLogger.error("AI-Search", msg)
+                    return@withContext emptyList()
+                }
+                if (body.isNullOrBlank()) {
+                    val msg = "[AI-Search] Empty body for $shortUrl (HTTP ${response.code})"
+                    System.err.println(msg)
+                    com.arflix.tv.util.RemoteCrashLogger.error("AI-Search", msg)
                     return@withContext emptyList()
                 }
                 val parsed = gson.fromJson(body, com.arflix.tv.data.api.StremioCatalogResponse::class.java)
                 val metas = parsed?.metas ?: parsed?.items ?: emptyList()
-                System.err.println("[AI-Search] Parsed ${metas.size} metas from ${url.substringAfterLast("/catalog/").take(40)}")
+                if (metas.isEmpty()) {
+                    // Body was valid JSON but no metas — log body preview for debugging
+                    val msg = "[AI-Search] 0 metas parsed from $shortUrl body_len=${body.length} preview=${body.take(300)}"
+                    System.err.println(msg)
+                    com.arflix.tv.util.RemoteCrashLogger.error("AI-Search", msg)
+                } else {
+                    System.err.println("[AI-Search] Parsed ${metas.size} metas from $shortUrl")
+                }
                 metas
             } catch (e: Exception) {
-                System.err.println("[AI-Search] fetchAiCatalog FAILED: ${e.javaClass.simpleName}: ${e.message}")
+                val msg = "[AI-Search] fetchAiCatalog FAILED: ${e.javaClass.simpleName}: ${e.message}"
+                System.err.println(msg)
+                com.arflix.tv.util.RemoteCrashLogger.error("AI-Search", msg, e)
                 emptyList()
             }
         }

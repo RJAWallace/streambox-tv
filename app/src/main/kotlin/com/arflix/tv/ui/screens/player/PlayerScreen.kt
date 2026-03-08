@@ -273,40 +273,45 @@ fun PlayerScreen(
         }
     }
 
-    // Track current stream index for auto-advancement on error
-    var currentStreamIndex by remember { mutableIntStateOf(0) }
+    // Track which fallback position we're at for quality-sorted auto-advancement
+    var fallbackPosition by remember { mutableIntStateOf(0) }
     val tryAdvanceToNextStream: () -> Boolean = {
+        // Use quality-sorted fallback order from auto-select (descending quality+size).
+        // This walks through streams in the same order as the visible sources list
+        // instead of cycling randomly through the original API response order.
+        val fallbackList = viewModel.autoPlayFallbackOrder
         val streams = uiState.streams
-        if (streams.size <= 1) {
+
+        // Find the next untried stream in the quality-sorted order
+        val nextStream = fallbackList
+            .filterIndexed { idx, _ -> idx > fallbackPosition }
+            .firstOrNull { s ->
+                s.url?.isNotBlank() == true &&
+                    s !in triedStreamIndexes.mapNotNull { streams.getOrNull(it) }
+            }
+
+        if (nextStream == null) {
             false
         } else {
-            val nextIndex = (1 until streams.size)
-                .map { offset -> (currentStreamIndex + offset) % streams.size }
-                .firstOrNull { idx ->
-                    streams[idx].url?.isNotBlank() == true &&
-                        idx !in triedStreamIndexes
-                } ?: -1
-
-            if (nextIndex < 0) {
-                false
-            } else {
-                autoAdvanceAttempts += 1
-                currentStreamIndex = nextIndex
-                triedStreamIndexes = triedStreamIndexes + nextIndex
-                userSelectedSourceManually = false
-                playbackIssueReported = false
-                startupRecoverAttempted = false
-                startupHardFailureReported = false
-                startupSameSourceRetryCount = 0
-                startupSameSourceRefreshAttempted = false
-                startupUrlLock = null
-                dvStartupFallbackStage = 0
-                rebufferRecoverAttempted = false
-                longRebufferCount = 0
-                isAutoAdvancing = true
-                viewModel.selectStream(streams[nextIndex])
-                true
+            val streamIndex = streams.indexOf(nextStream)
+            fallbackPosition = fallbackList.indexOf(nextStream)
+            autoAdvanceAttempts += 1
+            if (streamIndex >= 0) {
+                triedStreamIndexes = triedStreamIndexes + streamIndex
             }
+            userSelectedSourceManually = false
+            playbackIssueReported = false
+            startupRecoverAttempted = false
+            startupHardFailureReported = false
+            startupSameSourceRetryCount = 0
+            startupSameSourceRefreshAttempted = false
+            startupUrlLock = null
+            dvStartupFallbackStage = 0
+            rebufferRecoverAttempted = false
+            longRebufferCount = 0
+            isAutoAdvancing = true
+            viewModel.selectStream(nextStream)
+            true
         }
     }
 
@@ -693,7 +698,9 @@ fun PlayerScreen(
         val currentUrl = uiState.selectedStreamUrl ?: return@LaunchedEffect
         val idx = uiState.streams.indexOfFirst { it.url == currentUrl }
         if (idx >= 0) {
-            currentStreamIndex = idx
+            // Update fallback position to match current stream in quality-sorted order
+            val fallbackIdx = viewModel.autoPlayFallbackOrder.indexOfFirst { it.url == currentUrl }
+            if (fallbackIdx >= 0) fallbackPosition = fallbackIdx
             if (isAutoAdvancing) {
                 triedStreamIndexes = triedStreamIndexes + idx
                 isAutoAdvancing = false
