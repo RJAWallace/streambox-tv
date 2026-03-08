@@ -409,7 +409,12 @@ class PlayerViewModel @Inject constructor(
                         val sA = parseSize(a.size)
                         val sB = parseSize(b.size)
                         if (sA != sB) return@sortedWith sB.compareTo(sA)  // Larger size first
-                        a.source.compareTo(b.source)  // Alphabetical tie-break
+                        val srcCmp = a.source.compareTo(b.source)
+                        if (srcCmp != 0) return@sortedWith srcCmp  // Alphabetical source
+                        // Extra tie-breakers for full determinism (addon response order varies)
+                        val sizeCmp = a.size.compareTo(b.size)
+                        if (sizeCmp != 0) return@sortedWith sizeCmp
+                        (a.url ?: "").compareTo(b.url ?: "")
                     }
 
                     // 2. Apply quality cap
@@ -756,17 +761,23 @@ class PlayerViewModel @Inject constructor(
 
     /**
      * Returns false for streams that should NEVER be auto-played.
-     * These are addon control/sync entries (e.g. "Comet sync") that aren't real media streams.
+     * These are addon control/sync entries (e.g. "Comet sync", "Comet") that aren't real media streams.
      */
     private fun isAutoPlayable(stream: StreamSource): Boolean {
         val combined = buildString {
             append(stream.source.lowercase())
             append(' ')
             append(stream.quality.lowercase())
+            append(' ')
+            append(stream.addonName.lowercase())
             stream.behaviorHints?.filename?.let { append(' '); append(it.lowercase()) }
         }
         // Comet sync / refresh entries — not real streams
         if (combined.contains("sync") && combined.contains("comet")) return false
+        // Comet addon entries with UNKNOWN quality — these are control/status entries, not real streams
+        val isComet = stream.addonName.contains("comet", ignoreCase = true) ||
+                      stream.source.contains("comet", ignoreCase = true)
+        if (isComet && stream.quality.contains("UNKNOWN", ignoreCase = true)) return false
         // Any stream whose quality is "UNKNOWN" and has no real URL content
         if (stream.quality.contains("UNKNOWN", ignoreCase = true) && stream.size.isBlank()) return false
         return true

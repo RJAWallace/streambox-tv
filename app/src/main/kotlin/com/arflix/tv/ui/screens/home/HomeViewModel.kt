@@ -732,12 +732,27 @@ class HomeViewModel @Inject constructor(
                     } catch (_: Exception) { emptyList() }
                     if (requestId != loadHomeRequestId) return@cw
 
-                    // Show un-enriched items immediately so CW row appears without delay
+                    // Show items immediately, merging with cached enriched data for
+                    // descriptions/overview so hover info is available right away.
                     if (rawItems.isNotEmpty()) {
+                        val cachedEnriched = traktRepository.getCachedContinueWatching()
+                        val enrichedById = cachedEnriched.associateBy { it.id }
+                        val mergedRaw = rawItems.map { raw ->
+                            val cached = enrichedById[raw.id]
+                            if (cached != null && cached.overview.isNotEmpty()) {
+                                raw.copy(
+                                    overview = cached.overview,
+                                    year = cached.year.ifEmpty { raw.year },
+                                    imdbRating = cached.imdbRating.ifEmpty { raw.imdbRating },
+                                    duration = cached.duration.ifEmpty { raw.duration },
+                                    episodeTitle = raw.episodeTitle ?: cached.episodeTitle
+                                )
+                            } else raw
+                        }
                         val rawCategory = Category(
                             id = "continue_watching",
                             title = "Continue Watching",
-                            items = rawItems.map { it.toMediaItem() }.deduplicateItems()
+                            items = mergedRaw.map { it.toMediaItem() }.deduplicateItems()
                         )
                         rawCategory.items.forEach { mediaRepository.cacheItem(it) }
                         lastContinueWatchingItems = rawCategory.items
@@ -1354,11 +1369,16 @@ class HomeViewModel @Inject constructor(
             if (historyEntries.isEmpty()) return items
 
             val sortedHistory = historyEntries.sortedByDescending { it.updated_at ?: it.paused_at.orEmpty() }
-            val byExactKey = sortedHistory.associateBy { entry ->
-                "${entry.media_type}:${entry.show_tmdb_id}:${entry.season ?: -1}:${entry.episode ?: -1}"
-            }
-            val byShowKey = sortedHistory.associateBy { entry ->
-                "${entry.media_type}:${entry.show_tmdb_id}"
+
+            // Build lookup maps keeping the FIRST (most recent) entry per key.
+            // associateBy keeps the LAST entry, so we use manual iteration instead.
+            val byExactKey = LinkedHashMap<String, com.arflix.tv.data.repository.WatchHistoryEntry>()
+            val byShowKey = LinkedHashMap<String, com.arflix.tv.data.repository.WatchHistoryEntry>()
+            for (entry in sortedHistory) {
+                val exactKey = "${entry.media_type}:${entry.show_tmdb_id}:${entry.season ?: -1}:${entry.episode ?: -1}"
+                val showKey = "${entry.media_type}:${entry.show_tmdb_id}"
+                if (!byExactKey.containsKey(exactKey)) byExactKey[exactKey] = entry
+                if (!byShowKey.containsKey(showKey)) byShowKey[showKey] = entry
             }
 
             items.map { item ->
@@ -1368,13 +1388,18 @@ class HomeViewModel @Inject constructor(
                 val match = byExactKey[exactKey] ?: byShowKey[showKey]
                 if (match == null) {
                     item
+                } else if (item.isUpNext) {
+                    // "Up next" items: only update episodeTitle from the match,
+                    // DON'T overwrite season/episode (already set to next ep by raw loader)
+                    item.copy(
+                        episodeTitle = match.episode_title ?: item.episodeTitle
+                    )
                 } else {
+                    // In-progress items: update progress/position data
                     item.copy(
                         progress = (match.progress * 100f).toInt().coerceIn(0, 100),
                         resumePositionSeconds = match.position_seconds.coerceAtLeast(0L),
                         durationSeconds = match.duration_seconds.coerceAtLeast(0L),
-                        season = match.season ?: item.season,
-                        episode = match.episode ?: item.episode,
                         episodeTitle = match.episode_title ?: item.episodeTitle
                     )
                 }

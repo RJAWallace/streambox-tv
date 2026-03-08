@@ -152,15 +152,21 @@ fun StreamSelector(
                 return@sortedWith qualityB - qualityA // Descending: higher quality first
             }
 
-            // 3. Larger size first (parse from display string for consistency)
+            // 2. Larger size first (parse from display string for consistency)
             val sizeA = getSizeBytes(a)
             val sizeB = getSizeBytes(b)
             if (sizeA != sizeB) {
                 return@sortedWith sizeB.compareTo(sizeA) // Descending: larger size first
             }
 
-            // 4. Tie-breaker: sort by source name alphabetically for stable ordering
-            a.source.compareTo(b.source)
+            // 3. Source name alphabetically
+            val srcCmp = a.source.compareTo(b.source)
+            if (srcCmp != 0) return@sortedWith srcCmp
+
+            // 4. Extra tie-breakers for full determinism (addon response order varies)
+            val sizeCmp = a.size.compareTo(b.size)
+            if (sizeCmp != 0) return@sortedWith sizeCmp
+            (a.url ?: "").compareTo(b.url ?: "")
         }
     }
 

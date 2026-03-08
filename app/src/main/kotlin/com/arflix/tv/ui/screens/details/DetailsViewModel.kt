@@ -532,6 +532,10 @@ class DetailsViewModel @Inject constructor(
         // Don't reload if already on this season
         if (_uiState.value.currentSeason == seasonNumber && _uiState.value.episodes.isNotEmpty()) return
 
+        // Reset initialEpisodeIndex so the LaunchedEffect in DetailsScreen
+        // doesn't override the episodeIndex back to an old value
+        _uiState.value = _uiState.value.copy(initialEpisodeIndex = 0)
+
         // Check season cache first
         val cached = seasonCache[seasonNumber]
         if (cached != null) {

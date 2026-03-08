@@ -368,6 +368,10 @@ class WatchlistRepository @Inject constructor(
         return authRepositoryProvider.get().getCurrentUserId()
     }
 
+    private fun getProfileId(): String {
+        return profileManager.getProfileIdSync().ifBlank { "default" }
+    }
+
     private suspend fun syncAddToCloud(item: LocalWatchlistItem) {
         val userId = getCloudUserId() ?: return // Not logged in, skip cloud sync
         try {
@@ -376,7 +380,8 @@ class WatchlistRepository @Inject constructor(
                 record = WatchlistRecord(
                     userId = userId,
                     tmdbId = item.tmdbId,
-                    mediaType = item.mediaType
+                    mediaType = item.mediaType,
+                    profileId = getProfileId()
                 )
             )
         } catch (e: Exception) {
@@ -390,6 +395,7 @@ class WatchlistRepository @Inject constructor(
             supabaseApi.deleteWatchlist(
                 auth = getSupabaseAuth(),
                 userId = "eq.$userId",
+                profileId = "eq.${getProfileId()}",
                 tmdbId = "eq.$tmdbId",
                 mediaType = "eq.$mediaType"
             )
@@ -407,7 +413,8 @@ class WatchlistRepository @Inject constructor(
         try {
             val cloudItems = supabaseApi.getWatchlist(
                 auth = getSupabaseAuth(),
-                userId = "eq.$userId"
+                userId = "eq.$userId",
+                profileId = "eq.${getProfileId()}"
             )
             if (cloudItems.isEmpty()) return
 
@@ -468,6 +475,7 @@ class WatchlistRepository @Inject constructor(
      */
     suspend fun pushWatchlistToCloud() {
         val userId = getCloudUserId() ?: return
+        val profileId = getProfileId()
         val items = loadWatchlistRaw()
         for (item in items) {
             try {
@@ -476,7 +484,8 @@ class WatchlistRepository @Inject constructor(
                     record = WatchlistRecord(
                         userId = userId,
                         tmdbId = item.tmdbId,
-                        mediaType = item.mediaType
+                        mediaType = item.mediaType,
+                        profileId = profileId
                     )
                 )
             } catch (e: Exception) {

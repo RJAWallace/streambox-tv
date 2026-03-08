@@ -97,6 +97,7 @@ interface SupabaseApi {
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Query("user_id") userId: String,
+        @Query("profile_id") profileId: String? = null,
         @Query("media_type") mediaType: String? = null,
         @Query("tmdb_id") tmdbId: String? = null,
         @Query("select") select: String = "*",
@@ -109,7 +110,7 @@ interface SupabaseApi {
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Header("Content-Type") contentType: String = "application/json",
         @Header("Prefer") prefer: String = "resolution=merge-duplicates",
-        @Query("on_conflict") onConflict: String = "user_id,tmdb_id,media_type",
+        @Query("on_conflict") onConflict: String = "user_id,tmdb_id,media_type,profile_id",
         @Body record: WatchlistRecord
     )
 
@@ -118,6 +119,7 @@ interface SupabaseApi {
         @Header("Authorization") auth: String,
         @Header("apikey") apiKey: String = Constants.SUPABASE_ANON_KEY,
         @Query("user_id") userId: String,
+        @Query("profile_id") profileId: String? = null,
         @Query("tmdb_id") tmdbId: String,
         @Query("media_type") mediaType: String
     )
@@ -320,6 +322,7 @@ data class WatchlistRecord(
     @SerializedName("user_id") val userId: String,
     @SerializedName("tmdb_id") val tmdbId: Int,
     @SerializedName("media_type") val mediaType: String,
+    @SerializedName("profile_id") val profileId: String = "default",
     @SerializedName("added_at") val addedAt: String? = null
 )
 
