@@ -417,9 +417,19 @@ class PlayerViewModel @Inject constructor(
                     val selected = preferredFromNavigation ?: stabilitySelected ?: autoPlayable.first()
 
                     // Build quality-sorted fallback order for auto-advance on playback error.
-                    // This ensures retries go through streams in quality-descending order
-                    // (matching the visible sources list) instead of random list order.
-                    val sortedFallback = autoPlayable
+                    // IMPORTANT: Apply quality cap to fallback so retries stay within
+                    // the user's max quality (e.g. don't jump to 4K when max is 1080p).
+                    val fallbackCandidates = if (maxThreshold > 0) {
+                        val capped = autoPlayable.filter { s ->
+                            val qs = qualityScore(s.quality)
+                            qs in 1..maxThreshold
+                        }
+                        capped.ifEmpty {
+                            autoPlayable.filter { qualityScore(it.quality) == 0 && isAutoPlayable(it) }
+                        }.ifEmpty { autoPlayable }
+                    } else autoPlayable
+
+                    val sortedFallback = fallbackCandidates
                         .filter { it != selected }
                         .sortedByDescending { s ->
                             val langScore = streamLanguageScore(s, preferredLanguage)

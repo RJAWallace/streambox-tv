@@ -503,24 +503,29 @@ fun PlayerScreen(
                                     "sockettimeout" in timeoutMessage ||
                                     "etimedout" in timeoutMessage
 
-                            // For heavy sources, retry same source first instead of failing immediately.
-                            if (!hasPlaybackStarted && heavy && isTimeoutError && startupSameSourceRetryCount < heavyStartupMaxRetries) {
+                            // Always retry the same source at least once before advancing.
+                            // This matches manual-selection behavior where the stream loads
+                            // fine on retry. Many debrid URLs need a second attempt.
+                            if (!hasPlaybackStarted && startupSameSourceRetryCount < heavyStartupMaxRetries) {
                                 startupSameSourceRetryCount += 1
+                                System.err.println("[Player] Startup error (attempt ${startupSameSourceRetryCount}), retrying same source: ${error.errorCode} ${error.message}")
                                 val wasPlaying = playWhenReady
                                 stop()
                                 prepare()
                                 playWhenReady = wasPlaying
                                 return
                             }
-                            if (!hasPlaybackStarted && heavy && isTimeoutError) {
+                            if (!hasPlaybackStarted && isTimeoutError) {
                                 // One-time full re-resolve of same source to refresh debrid URL/headers.
                                 if (!startupSameSourceRefreshAttempted) {
                                     startupSameSourceRefreshAttempted = true
+                                    System.err.println("[Player] Startup timeout, refreshing debrid URL")
                                     uiState.selectedStream?.let { viewModel.selectStream(it) }
                                     return
                                 }
                             }
 
+                            System.err.println("[Player] Auto-advancing after startup error: code=${error.errorCode} msg=${error.message?.take(100)}")
                             if (!hasPlaybackStarted &&
                                 allowStartupSourceFallback &&
                                 !userSelectedSourceManually &&
@@ -2958,7 +2963,9 @@ private fun estimateInitialStartupTimeoutMs(
     stream: StreamSource?,
     isManualSelection: Boolean
 ): Long {
-    var timeoutMs = if (isManualSelection) 30_000L else 15_000L
+    // Use the same generous base timeout for auto-select and manual.
+    // Auto-select picks high-quality streams that need time to start.
+    var timeoutMs = 30_000L
     if (stream == null) return timeoutMs
 
     val haystack = buildString {

@@ -740,13 +740,19 @@ class MediaRepository @Inject constructor(
             return cached.data
         }
 
-        val findResponse = runCatching {
+        // Don't use runCatching — it swallows CancellationException in coroutines.
+        val findResponse = try {
             tmdbApi.findByExternalId(
                 externalId = normalizedImdb,
                 apiKey = apiKey,
                 externalSource = "imdb_id"
             )
-        }.getOrNull()
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (e: Exception) {
+            System.err.println("[AI-Search] findByExternalId FAILED for $normalizedImdb: ${e.javaClass.simpleName}: ${e.message}")
+            null
+        }
 
         val resolved = findResponse?.let { response ->
             val movies = response.movieResults
@@ -1172,6 +1178,7 @@ class MediaRepository @Inject constructor(
 
         // Resolve IMDB IDs to TMDB IDs in parallel (max 6 concurrent)
         val semaphore = Semaphore(6)
+        var resolveFailCount = 0
         val items = coroutineScope {
             allMetas.mapNotNull { meta ->
                 val imdbId = meta.id?.takeIf { it.startsWith("tt") } ?: return@mapNotNull null
@@ -1182,7 +1189,12 @@ class MediaRepository @Inject constructor(
                 }
                 async {
                     semaphore.withPermit {
-                        val ref = resolveImdbToTmdbRef(imdbId, mediaTypeHint) ?: return@async null
+                        val ref = resolveImdbToTmdbRef(imdbId, mediaTypeHint)
+                        if (ref == null) {
+                            resolveFailCount++
+                            System.err.println("[AI-Search] IMDB resolve FAILED for $imdbId (${meta.name})")
+                            return@async null
+                        }
                         MediaItem(
                             id = ref.second,
                             title = meta.name ?: "",
@@ -1196,7 +1208,15 @@ class MediaRepository @Inject constructor(
                 }
             }.mapNotNull { it.await() }
         }
-        System.err.println("[AI-Search] Resolved ${items.size}/${allMetas.size} for '$query'")
+        val resolveMsg = "[AI-Search] Resolved ${items.size}/${allMetas.size} for '$query' (${resolveFailCount} IMDB lookups failed)"
+        System.err.println(resolveMsg)
+        com.arflix.tv.util.RemoteCrashLogger.checkpoint("AI-Search", resolveMsg)
+        if (items.isEmpty() && allMetas.isNotEmpty()) {
+            // All IMDB→TMDB resolutions failed — log first few IDs for debugging
+            val sampleIds = allMetas.take(5).joinToString { "${it.id}(${it.name})" }
+            com.arflix.tv.util.RemoteCrashLogger.error("AI-Search",
+                "0 resolved from ${allMetas.size} addon results. Sample IDs: $sampleIds")
+        }
         cacheItems(items)
         return items
     }
