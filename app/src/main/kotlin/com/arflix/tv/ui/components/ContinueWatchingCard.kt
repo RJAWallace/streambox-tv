@@ -19,8 +19,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -169,9 +171,14 @@ fun ContinueWatchingCard(
 
         Spacer(modifier = Modifier.height(ArvioSkin.spacing.x2))
 
+        val cardTextShadow = Shadow(
+            color = Color.Black.copy(alpha = 0.8f),
+            offset = Offset(0f, 1f),
+            blurRadius = 4f
+        )
         Text(
             text = item.title,
-            style = ArvioSkin.typography.cardTitle,
+            style = ArvioSkin.typography.cardTitle.copy(shadow = cardTextShadow),
             color = if (isFocused) ArvioSkin.colors.textPrimary else ArvioSkin.colors.textMuted,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -181,7 +188,7 @@ fun ContinueWatchingCard(
         if (meta != null) {
             Text(
                 text = meta,
-                style = ArvioSkin.typography.caption,
+                style = ArvioSkin.typography.caption.copy(shadow = cardTextShadow),
                 color = ArvioSkin.colors.textMuted.copy(alpha = 0.85f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

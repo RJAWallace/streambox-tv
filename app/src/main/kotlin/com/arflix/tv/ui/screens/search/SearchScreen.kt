@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.foundation.lazy.list.TvLazyRow
 import androidx.tv.foundation.lazy.list.itemsIndexed
@@ -281,15 +282,17 @@ fun SearchScreen(
                     .weight(1f)
                     .fillMaxSize()
                     .padding(
-                        horizontal = if (isCompactHeight) 40.dp else 48.dp,
-                        vertical = if (isCompactHeight) 20.dp else 32.dp
+                        start = if (isCompactHeight) 40.dp else 48.dp,
+                        end = if (isCompactHeight) 40.dp else 48.dp,
+                        top = if (isCompactHeight) 20.dp else 32.dp,
+                        bottom = if (isCompactHeight) 8.dp else 12.dp
                     )
             ) {
                 // Centered Search Bar at Top
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = if (isCompactHeight) 20.dp else 32.dp),
+                        .padding(bottom = if (isCompactHeight) 16.dp else 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Row(
@@ -365,13 +368,13 @@ fun SearchScreen(
                         )
                     }
                 } else {
-                    // Search method badge (debug: shows AI or TMDB)
+                    // Search method badge — inline with first row title to save vertical space
                     if (uiState.searchMethod.isNotEmpty()) {
                         Text(
                             text = "Search: ${uiState.searchMethod}",
-                            style = ArflixTypography.caption,
+                            style = ArflixTypography.caption.copy(fontSize = 10.sp),
                             color = if (uiState.searchMethod == "AI") Color(0xFF4CAF50) else TextSecondary,
-                            modifier = Modifier.padding(start = 16.dp, bottom = 4.dp)
+                            modifier = Modifier.padding(start = 16.dp)
                         )
                     }
                     // Movies Row
@@ -455,7 +458,7 @@ private fun SearchResultRow(
             text = "$title (${items.size})",
             style = ArvioSkin.typography.sectionTitle,
             color = ArvioSkin.colors.textPrimary,
-            modifier = Modifier.padding(bottom = 12.dp)
+            modifier = Modifier.padding(bottom = if (isCompactHeight) 6.dp else 10.dp)
         )
 
         // Horizontal Card Row - extra padding to prevent focus scale clipping
@@ -468,8 +471,8 @@ private fun SearchResultRow(
                 contentPadding = PaddingValues(
                     start = rowStartPadding,
                     end = rowEndPadding,
-                    top = if (isCompactHeight) 10.dp else 16.dp,
-                    bottom = if (isCompactHeight) 24.dp else 28.dp
+                    top = if (isCompactHeight) 6.dp else 12.dp,
+                    bottom = if (isCompactHeight) 12.dp else 16.dp
                 ),
                 horizontalArrangement = Arrangement.spacedBy(itemSpacing),
                 pivotOffsets = androidx.tv.foundation.PivotOffsets(
