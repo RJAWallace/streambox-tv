@@ -69,6 +69,10 @@ data class HomeUiState(
     val isAuthenticated: Boolean = false,
     // CW check complete — prevents showing trending then scrolling to CW
     val cwCheckComplete: Boolean = false,
+    // Server CW data fetched from Supabase (not just disk cache)
+    val serverCwLoaded: Boolean = false,
+    // Cloud watchlist pulled from Supabase
+    val serverWatchlistLoaded: Boolean = false,
     // True when CW + catalogues + watchlist are all loaded — HomeScreen shows loading until this is true
     val initialDataReady: Boolean = false,
     // Toast
@@ -307,7 +311,8 @@ class HomeViewModel @Inject constructor(
      */
     private fun markInitialDataReadyIfComplete() {
         val state = _uiState.value
-        if (!state.initialDataReady && state.cwCheckComplete && !state.isInitialLoad) {
+        if (!state.initialDataReady && state.cwCheckComplete && !state.isInitialLoad
+            && state.serverCwLoaded && state.serverWatchlistLoaded) {
             _uiState.value = state.copy(initialDataReady = true)
         }
     }
@@ -428,12 +433,15 @@ class HomeViewModel @Inject constructor(
             } catch (_: Exception) { }
         }
 
-        // 5. Pre-warm watchlist cache
+        // 5. Pre-warm watchlist cache + pull from cloud before showing home
         profileLoadJobs += viewModelScope.launch {
             try {
                 watchlistRepository.getWatchlistItems()
                 watchlistRepository.pullWatchlistFromCloud()
             } catch (_: Exception) {}
+            // Mark watchlist as synced so loading screen can dismiss
+            _uiState.value = _uiState.value.copy(serverWatchlistLoaded = true)
+            markInitialDataReadyIfComplete()
         }
 
         // 6. Safety timeout — force-show home after 8s no matter what
@@ -444,7 +452,9 @@ class HomeViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     initialDataReady = true,
                     cwCheckComplete = true,
-                    isInitialLoad = false
+                    isInitialLoad = false,
+                    serverCwLoaded = true,
+                    serverWatchlistLoaded = true
                 )
             }
         }
@@ -548,6 +558,13 @@ class HomeViewModel @Inject constructor(
             if (requestId != loadHomeRequestId) return@loadHome
 
             try {
+                // Launch CW Supabase fetch concurrently with category loading.
+                // This runs in parallel so server CW data is ready when categories finish.
+                val cwRawDeferred = async(networkDispatcher) {
+                    try { loadContinueWatchingFromHistoryRaw() }
+                    catch (_: Exception) { emptyList() }
+                }
+
                 val cachedContinueWatching = traktRepository.preloadContinueWatchingCache()
                 val savedCatalogs = withContext(networkDispatcher) {
                     runCatching {
@@ -715,75 +732,72 @@ class HomeViewModel @Inject constructor(
                     isAuthenticated = traktRepository.isAuthenticated.first(),
                     error = null
                 )
-                markInitialDataReadyIfComplete()
                 _cardLogoUrls.value = snapshotLogoCache()
                 refreshWatchedBadges()
                 val allCatalogs = catalogRepository.getCatalogs()
                 loadCustomCatalogsIncrementally(allCatalogs)
 
-                // Load Continue Watching from Supabase (primary, syncs across devices)
-                // Two-phase: show un-enriched items immediately (fast), then enrich in background.
-                viewModelScope.launch cw@{
-                    if (requestId != loadHomeRequestId) return@cw
+                // Await server CW data (launched concurrently at start of loadHomeData).
+                // This ensures the loading screen doesn't dismiss until server CW is ready.
+                val rawCwItems = cwRawDeferred.await()
+                if (requestId != loadHomeRequestId) return@loadHome
 
-                    // Phase 1: Fetch watch history from Supabase (fast network call)
-                    val rawItems = try {
-                        loadContinueWatchingFromHistoryRaw()
-                    } catch (_: Exception) { emptyList() }
-                    if (requestId != loadHomeRequestId) return@cw
-
-                    // Show items immediately, merging with cached enriched data for
-                    // descriptions/overview so hover info is available right away.
-                    if (rawItems.isNotEmpty()) {
-                        val cachedEnriched = traktRepository.getCachedContinueWatching()
-                        val enrichedById = cachedEnriched.associateBy { it.id }
-                        val mergedRaw = rawItems.map { raw ->
-                            val cached = enrichedById[raw.id]
-                            if (cached != null && cached.overview.isNotEmpty()) {
-                                raw.copy(
-                                    overview = cached.overview,
-                                    year = cached.year.ifEmpty { raw.year },
-                                    imdbRating = cached.imdbRating.ifEmpty { raw.imdbRating },
-                                    duration = cached.duration.ifEmpty { raw.duration },
-                                    episodeTitle = raw.episodeTitle ?: cached.episodeTitle
-                                )
-                            } else raw
-                        }
-                        val rawCategory = Category(
-                            id = "continue_watching",
-                            title = "Continue Watching",
-                            items = mergedRaw.map { it.toMediaItem() }.deduplicateItems()
-                        )
-                        rawCategory.items.forEach { mediaRepository.cacheItem(it) }
-                        lastContinueWatchingItems = rawCategory.items
-                        lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
-                        val rawUpdated = _uiState.value.categories.toMutableList()
-                        val rawIdx = rawUpdated.indexOfFirst { it.id == "continue_watching" }
-                        if (rawIdx >= 0) rawUpdated[rawIdx] = rawCategory else rawUpdated.add(0, rawCategory)
-                        val cwIsFirst = rawUpdated.firstOrNull()?.id == "continue_watching"
-                        val rawHero = if (cwIsFirst) rawCategory.items.firstOrNull() else null
-                        if (rawHero != null) {
-                            val heroKey = "${rawHero.mediaType}_${rawHero.id}"
-                            _uiState.value = _uiState.value.copy(
-                                categories = rawUpdated,
-                                heroItem = rawHero,
-                                heroLogoUrl = getCachedLogo(heroKey)
+                // Phase 1: Display server CW items with cached enriched data for descriptions
+                if (rawCwItems.isNotEmpty()) {
+                    val cachedEnriched = traktRepository.getCachedContinueWatching()
+                    val enrichedById = cachedEnriched.associateBy { it.id }
+                    val mergedRaw = rawCwItems.map { raw ->
+                        val cached = enrichedById[raw.id]
+                        if (cached != null && cached.overview.isNotEmpty()) {
+                            raw.copy(
+                                overview = cached.overview,
+                                year = cached.year.ifEmpty { raw.year },
+                                imdbRating = cached.imdbRating.ifEmpty { raw.imdbRating },
+                                duration = cached.duration.ifEmpty { raw.duration },
+                                episodeTitle = raw.episodeTitle ?: cached.episodeTitle
                             )
-                        } else {
-                            _uiState.value = _uiState.value.copy(categories = rawUpdated)
-                        }
+                        } else raw
                     }
+                    val rawCategory = Category(
+                        id = "continue_watching",
+                        title = "Continue Watching",
+                        items = mergedRaw.map { it.toMediaItem() }.deduplicateItems()
+                    )
+                    rawCategory.items.forEach { mediaRepository.cacheItem(it) }
+                    lastContinueWatchingItems = rawCategory.items
+                    lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
+                    val rawUpdated = _uiState.value.categories.toMutableList()
+                    val rawIdx = rawUpdated.indexOfFirst { it.id == "continue_watching" }
+                    if (rawIdx >= 0) rawUpdated[rawIdx] = rawCategory else rawUpdated.add(0, rawCategory)
+                    val cwIsFirst = rawUpdated.firstOrNull()?.id == "continue_watching"
+                    val rawHero = if (cwIsFirst) rawCategory.items.firstOrNull() else null
+                    if (rawHero != null) {
+                        val heroKey = "${rawHero.mediaType}_${rawHero.id}"
+                        _uiState.value = _uiState.value.copy(
+                            categories = rawUpdated,
+                            heroItem = rawHero,
+                            heroLogoUrl = getCachedLogo(heroKey)
+                        )
+                    } else {
+                        _uiState.value = _uiState.value.copy(categories = rawUpdated)
+                    }
+                }
 
-                    // Phase 2: Enrich with TMDB data in background (adds overview, year, rating)
-                    val enrichedItems = try {
-                        if (rawItems.isNotEmpty()) {
-                            traktRepository.enrichContinueWatchingItems(rawItems)
-                        } else emptyList()
-                    } catch (_: Exception) { rawItems }
-                    if (requestId != loadHomeRequestId) return@cw
+                // Server CW loaded — allow loading screen to dismiss (if watchlist also ready)
+                _uiState.value = _uiState.value.copy(serverCwLoaded = true)
+                markInitialDataReadyIfComplete()
 
-                    val supabaseItems = enrichedItems.ifEmpty { rawItems }
-                    if (supabaseItems.isNotEmpty()) {
+                // Phase 2: Enrich CW with TMDB data in background (adds overview, year, rating)
+                if (rawCwItems.isNotEmpty()) {
+                    viewModelScope.launch {
+                        if (requestId != loadHomeRequestId) return@launch
+
+                        val enrichedItems = try {
+                            traktRepository.enrichContinueWatchingItems(rawCwItems)
+                        } catch (_: Exception) { rawCwItems }
+                        if (requestId != loadHomeRequestId) return@launch
+
+                        val supabaseItems = enrichedItems.ifEmpty { rawCwItems }
                         val mergedItems = try { mergeContinueWatchingResumeData(supabaseItems) } catch (_: Exception) { supabaseItems }
                         val continueWatchingCategory = Category(
                             id = "continue_watching",
@@ -838,6 +852,7 @@ class HomeViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isInitialLoad = false,
+                    serverCwLoaded = true,        // Don't block loading screen on error
                     error = if (_uiState.value.categories.isEmpty()) e.message ?: "Failed to load content" else null
                 )
                 markInitialDataReadyIfComplete()
