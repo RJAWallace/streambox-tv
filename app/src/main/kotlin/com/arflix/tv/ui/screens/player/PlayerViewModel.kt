@@ -1507,11 +1507,16 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun saveProgress(position: Long, duration: Long, progressPercent: Int, isPlaying: Boolean, playbackState: Int) {
+    fun saveProgress(position: Long, duration: Long, progressPercent: Int, isPlaying: Boolean, playbackState: Int, force: Boolean = false) {
         if (duration <= 0) return
 
-        // Don't cancel in-flight saves — if one is running, let it finish
-        if (progressSaveJob?.isActive == true) return
+        // Don't cancel in-flight saves — if one is running, let it finish.
+        // Exception: force mode (back/pause/error) cancels the stale job to
+        // guarantee the exact current timestamp is saved immediately.
+        if (progressSaveJob?.isActive == true) {
+            if (!force) return
+            progressSaveJob?.cancel()
+        }
         progressSaveJob = viewModelScope.launch(Dispatchers.IO) {
             val currentTime = System.currentTimeMillis()
             val progressFraction = (progressPercent / 100f).coerceIn(0f, 1f)
@@ -1543,7 +1548,7 @@ class PlayerViewModel @Inject constructor(
                     // Scrobble pause immediate failed
                 }
                 lastScrobbleTime = currentTime
-            } else if (isPlaying && currentTime - lastScrobbleTime >= SCROBBLE_UPDATE_INTERVAL_MS) {
+            } else if (isPlaying && (force || currentTime - lastScrobbleTime >= SCROBBLE_UPDATE_INTERVAL_MS)) {
                 try {
                     traktRepository.scrobblePause(
                         mediaType = currentMediaType,
@@ -1558,8 +1563,9 @@ class PlayerViewModel @Inject constructor(
                 lastScrobbleTime = currentTime
             }
 
-            // Save to Supabase watch history (debounced + on pause/stop)
-            if (!isPlaying || currentTime - lastWatchHistorySaveTime >= WATCH_HISTORY_UPDATE_INTERVAL_MS || progressPercent >= Constants.WATCHED_THRESHOLD) {
+            // Save to Supabase watch history (debounced + on pause/stop).
+            // Force mode bypasses the 15s throttle to guarantee exact timestamps on back/pause/error.
+            if (force || !isPlaying || currentTime - lastWatchHistorySaveTime >= WATCH_HISTORY_UPDATE_INTERVAL_MS || progressPercent >= Constants.WATCHED_THRESHOLD) {
                 val durationSeconds = (duration / 1000L).coerceAtLeast(1L)
                 val positionSeconds = (position / 1000L).coerceAtLeast(0L)
                 val selectedStream = _uiState.value.selectedStream

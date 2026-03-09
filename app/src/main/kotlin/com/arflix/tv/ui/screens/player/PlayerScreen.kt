@@ -551,6 +551,21 @@ fun PlayerScreen(
                             }
                             if (!playbackIssueReported) {
                                 playbackIssueReported = true
+                                // Save exact timestamp on mid-playback error before showing error modal
+                                if (hasPlaybackStarted) {
+                                    runCatching {
+                                        val errDuration = thisPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
+                                        val errPercent = if (errDuration > 0L) {
+                                            ((thisPlayer.currentPosition.toDouble() / errDuration.toDouble()) * 100.0)
+                                                .toInt().coerceIn(0, 100)
+                                        } else 0
+                                        viewModel.saveProgress(
+                                            thisPlayer.currentPosition, errDuration, errPercent,
+                                            isPlaying = false, playbackState = thisPlayer.playbackState,
+                                            force = true
+                                        )
+                                    }
+                                }
                                 viewModel.reportPlaybackError("This source failed to play. Please choose another source.")
                             }
                         }
@@ -636,7 +651,8 @@ fun PlayerScreen(
                 } else 0
                 viewModel.saveProgress(
                     exoPlayer.currentPosition, safeDuration, safePercent,
-                    isPlaying = exoPlayer.isPlaying, playbackState = exoPlayer.playbackState
+                    isPlaying = exoPlayer.isPlaying, playbackState = exoPlayer.playbackState,
+                    force = true
                 )
             }
         }
@@ -1251,7 +1267,8 @@ fun PlayerScreen(
                         safeDuration,
                         safeProgressPercent,
                         isPlaying = exoPlayer.isPlaying,
-                        playbackState = exoPlayer.playbackState
+                        playbackState = exoPlayer.playbackState,
+                        force = true
                     )
                 }
             }

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,12 +40,12 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.tv.foundation.lazy.grid.TvGridCells
-import androidx.tv.foundation.lazy.grid.TvLazyVerticalGrid
-import androidx.tv.foundation.lazy.grid.itemsIndexed
-import androidx.tv.foundation.lazy.grid.rememberTvLazyGridState
+import androidx.tv.foundation.lazy.list.TvLazyRow
+import androidx.tv.foundation.lazy.list.itemsIndexed
+import androidx.tv.foundation.lazy.list.rememberTvLazyListState
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
+import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.ui.components.LoadingIndicator
 import com.arflix.tv.ui.components.MediaCard
@@ -53,17 +54,16 @@ import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.components.ToastType as ComponentToastType
 import com.arflix.tv.ui.components.TopBarClock
+import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundDark
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
-import com.arflix.tv.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
 /**
- * Watchlist screen - matches webapp design with grid layout
+ * Watchlist screen — Movies and TV Shows in separate horizontal rows.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -79,64 +79,74 @@ fun WatchlistScreen(
     onBack: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val usePosterCards = false
     val configuration = LocalConfiguration.current
-    val gridColumns = when {
-        configuration.screenWidthDp >= 2200 -> 5
-        configuration.screenWidthDp >= 1600 -> 4
-        else -> 3
+    val screenHeight = configuration.screenHeightDp
+    val isCompactHeight = screenHeight <= 780
+    val itemWidth = when {
+        screenHeight <= 600 -> 170.dp
+        screenHeight <= 700 -> 188.dp
+        else -> 210.dp
     }
-    val cardWidth = when (gridColumns) {
-        5 -> 240.dp
-        4 -> 250.dp
-        else -> 230.dp
-    }
-    
+
     var isSidebarFocused by remember { mutableStateOf(false) }
     val hasProfile = currentProfile != null
     val maxSidebarIndex = if (hasProfile) SidebarItem.entries.size else SidebarItem.entries.size - 1
     var sidebarFocusIndex by remember { mutableIntStateOf(if (hasProfile) 3 else 2) } // WATCHLIST
     val rootFocusRequester = remember { FocusRequester() }
-    val gridFocusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
-    val gridState = rememberTvLazyGridState()
-    var focusedGridIndex by remember { mutableIntStateOf(0) }
 
-    // Keep the focused card in view with smooth animated scrolling.
-    LaunchedEffect(focusedGridIndex, uiState.items.size) {
-        if (uiState.items.isEmpty()) return@LaunchedEffect
-        val safe = focusedGridIndex.coerceIn(0, uiState.items.lastIndex)
-        val distance = abs(gridState.firstVisibleItemIndex - safe)
-        if (distance > 24) {
-            gridState.scrollToItem(safe)
-        } else {
-            gridState.animateScrollToItem(safe)
-        }
+    // Row-based focus state (0 = Movies, 1 = TV Shows)
+    var currentRowIndex by remember { mutableIntStateOf(0) }
+    var movieItemIndex by remember { mutableIntStateOf(0) }
+    var tvItemIndex by remember { mutableIntStateOf(0) }
+    val movieRowState = rememberTvLazyListState()
+    val tvRowState = rememberTvLazyListState()
+
+    // Determine which rows are visible
+    val hasMovies = uiState.movieItems.isNotEmpty()
+    val hasTv = uiState.tvItems.isNotEmpty()
+    val hasContent = hasMovies || hasTv
+
+    // Helper: get the list for the current row
+    fun currentRowItems(): List<MediaItem> = when {
+        currentRowIndex == 0 && hasMovies -> uiState.movieItems
+        currentRowIndex == 1 && hasTv -> uiState.tvItems
+        // If current row is empty, try the other one
+        hasMovies -> uiState.movieItems
+        hasTv -> uiState.tvItems
+        else -> emptyList()
+    }
+
+    fun currentItemIndex(): Int = if (currentRowIndex == 0) movieItemIndex else tvItemIndex
+
+    fun setCurrentItemIndex(index: Int) {
+        if (currentRowIndex == 0) movieItemIndex = index else tvItemIndex = index
     }
 
     LaunchedEffect(Unit) {
         rootFocusRequester.requestFocus()
     }
 
-    LaunchedEffect(uiState.isLoading, uiState.items.isEmpty()) {
-        if (!uiState.isLoading && uiState.items.isEmpty()) {
-            // Empty screen must always have a deterministic focus target.
+    LaunchedEffect(uiState.isLoading, hasContent) {
+        if (!uiState.isLoading && !hasContent) {
             isSidebarFocused = true
             sidebarFocusIndex = if (hasProfile) 3 else SidebarItem.WATCHLIST.ordinal
-        } else if (!uiState.isLoading && uiState.items.isNotEmpty() && !isSidebarFocused) {
-            // Ensure first card can receive focus when content becomes available.
-            delay(80)
-            runCatching { gridFocusRequester.requestFocus() }
         }
     }
-    
+
+    // Ensure currentRowIndex points to a row that has items
+    LaunchedEffect(hasMovies, hasTv) {
+        if (currentRowIndex == 0 && !hasMovies && hasTv) currentRowIndex = 1
+        if (currentRowIndex == 1 && !hasTv && hasMovies) currentRowIndex = 0
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(BackgroundDark)
             .focusRequester(rootFocusRequester)
             .onFocusChanged {
-                if (it.hasFocus && uiState.items.isEmpty()) {
+                if (it.hasFocus && !hasContent) {
                     isSidebarFocused = true
                 }
             }
@@ -154,44 +164,62 @@ fun WatchlistScreen(
                         }
                         Key.DirectionLeft -> {
                             if (!isSidebarFocused) {
-                                // Only go to sidebar when at leftmost column
-                                if (focusedGridIndex % gridColumns == 0) {
+                                val idx = currentItemIndex()
+                                if (idx <= 0) {
                                     isSidebarFocused = true
-                                    true
                                 } else {
-                                    // Move left within the grid
-                                    focusedGridIndex = (focusedGridIndex - 1).coerceAtLeast(0)
-                                    false // Let grid handle navigation
+                                    setCurrentItemIndex(idx - 1)
                                 }
+                                true
                             } else {
                                 true // Consume to prevent focus leaving
                             }
                         }
                         Key.DirectionRight -> {
                             if (isSidebarFocused) {
-                                if (uiState.items.isNotEmpty()) {
+                                if (hasContent) {
                                     isSidebarFocused = false
-                                    scope.launch {
-                                        delay(40)
-                                        runCatching { gridFocusRequester.requestFocus() }
-                                    }
+                                    // Point to whichever row has items
+                                    if (!hasMovies && hasTv) currentRowIndex = 1
+                                    else if (hasMovies) currentRowIndex = 0
                                 }
                                 true
                             } else {
-                                false
+                                val items = currentRowItems()
+                                val idx = currentItemIndex()
+                                if (idx < items.lastIndex) {
+                                    setCurrentItemIndex(idx + 1)
+                                }
+                                true
                             }
                         }
                         Key.DirectionUp -> {
                             if (isSidebarFocused) {
                                 sidebarFocusIndex = (sidebarFocusIndex - 1).coerceIn(0, maxSidebarIndex)
                                 true
-                            } else false
+                            } else {
+                                if (currentRowIndex == 1 && hasMovies) {
+                                    currentRowIndex = 0
+                                    true
+                                } else {
+                                    // At top row — go to sidebar
+                                    isSidebarFocused = true
+                                    true
+                                }
+                            }
                         }
                         Key.DirectionDown -> {
                             if (isSidebarFocused) {
                                 sidebarFocusIndex = (sidebarFocusIndex + 1).coerceIn(0, maxSidebarIndex)
                                 true
-                            } else false
+                            } else {
+                                if (currentRowIndex == 0 && hasTv) {
+                                    currentRowIndex = 1
+                                    true
+                                } else {
+                                    true // Already at bottom row
+                                }
+                            }
                         }
                         Key.Enter, Key.DirectionCenter -> {
                             if (isSidebarFocused) {
@@ -208,12 +236,18 @@ fun WatchlistScreen(
                                     }
                                 }
                                 true
-                            } else false
+                            } else {
+                                val items = currentRowItems()
+                                val idx = currentItemIndex().coerceIn(0, items.lastIndex.coerceAtLeast(0))
+                                items.getOrNull(idx)?.let { item ->
+                                    onNavigateToDetails(item.mediaType, item.id)
+                                }
+                                true
+                            }
                         }
                         else -> if (isSidebarFocused) true else false
                     }
                 } else if (event.type == KeyEventType.KeyUp && isSidebarFocused) {
-                    // Consume KeyUp events when sidebar is focused to prevent grid interaction
                     true
                 } else false
             }
@@ -236,7 +270,7 @@ fun WatchlistScreen(
                     }
                 }
             )
-            
+
             // Content
             Column(
                 modifier = Modifier
@@ -262,7 +296,7 @@ fun WatchlistScreen(
                         color = TextPrimary
                     )
                 }
-                
+
                 when {
                     uiState.isLoading -> {
                         Box(
@@ -302,29 +336,32 @@ fun WatchlistScreen(
                         }
                     }
                     else -> {
-                        // Grid of items - 4 columns like screenshot
-                        TvLazyVerticalGrid(
-                            columns = TvGridCells.Fixed(gridColumns),
-                            state = gridState,
-                            contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(24.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .focusRequester(gridFocusRequester)
-                                .onFocusChanged { 
-                                    if (it.hasFocus) {
-                                        isSidebarFocused = false
-                                    }
+                        Column(modifier = Modifier.weight(1f)) {
+                            if (hasMovies) {
+                                WatchlistRow(
+                                    title = "Movies",
+                                    items = uiState.movieItems,
+                                    rowState = movieRowState,
+                                    isCurrentRow = !isSidebarFocused && currentRowIndex == 0,
+                                    focusedItemIndex = movieItemIndex,
+                                    isCompactHeight = isCompactHeight,
+                                    itemWidth = itemWidth,
+                                    onItemClick = { item -> onNavigateToDetails(item.mediaType, item.id) }
+                                )
+                                if (hasTv) {
+                                    Spacer(modifier = Modifier.height(if (isCompactHeight) 8.dp else 16.dp))
                                 }
-                        ) {
-                            itemsIndexed(uiState.items) { index, item ->
-                                MediaCard(
-                                    item = item,
-                                    width = cardWidth,
-                                    isLandscape = !usePosterCards,
-                                    onFocused = { focusedGridIndex = index },
-                                    onClick = { onNavigateToDetails(item.mediaType, item.id) }
+                            }
+                            if (hasTv) {
+                                WatchlistRow(
+                                    title = "TV Shows",
+                                    items = uiState.tvItems,
+                                    rowState = tvRowState,
+                                    isCurrentRow = !isSidebarFocused && currentRowIndex == 1,
+                                    focusedItemIndex = tvItemIndex,
+                                    isCompactHeight = isCompactHeight,
+                                    itemWidth = itemWidth,
+                                    onItemClick = { item -> onNavigateToDetails(item.mediaType, item.id) }
                                 )
                             }
                         }
@@ -332,7 +369,7 @@ fun WatchlistScreen(
                 }
             }
         }
-        
+
         // Clock in top right
         TopBarClock(modifier = Modifier.align(Alignment.TopEnd))
 
@@ -348,6 +385,83 @@ fun WatchlistScreen(
                 isVisible = true,
                 onDismiss = { viewModel.dismissToast() }
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun WatchlistRow(
+    title: String,
+    items: List<MediaItem>,
+    rowState: androidx.tv.foundation.lazy.list.TvLazyListState,
+    isCurrentRow: Boolean,
+    focusedItemIndex: Int,
+    isCompactHeight: Boolean,
+    itemWidth: androidx.compose.ui.unit.Dp,
+    onItemClick: (MediaItem) -> Unit
+) {
+    val itemSpacing = 16.dp
+    val rowStartPadding = if (isCompactHeight) 12.dp else 16.dp
+    val rowEndPadding = if (isCompactHeight) 120.dp else 160.dp
+    var lastScrollIndex by remember { mutableIntStateOf(-1) }
+
+    LaunchedEffect(isCurrentRow) {
+        if (!isCurrentRow) lastScrollIndex = -1
+    }
+    LaunchedEffect(isCurrentRow, focusedItemIndex, items.size) {
+        if (!isCurrentRow || items.isEmpty()) return@LaunchedEffect
+        val targetIndex = focusedItemIndex.coerceIn(0, items.lastIndex)
+        if (lastScrollIndex == targetIndex) return@LaunchedEffect
+        rowState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
+        lastScrollIndex = targetIndex
+    }
+
+    Column {
+        // Row title with count
+        Text(
+            text = "$title (${items.size})",
+            style = ArvioSkin.typography.sectionTitle,
+            color = ArvioSkin.colors.textPrimary,
+            modifier = Modifier.padding(bottom = if (isCompactHeight) 6.dp else 10.dp)
+        )
+
+        // Horizontal card row
+        Box(modifier = Modifier.fillMaxWidth()) {
+            TvLazyRow(
+                state = rowState,
+                contentPadding = PaddingValues(
+                    start = rowStartPadding,
+                    end = rowEndPadding,
+                    top = if (isCompactHeight) 6.dp else 12.dp,
+                    bottom = if (isCompactHeight) 12.dp else 16.dp
+                ),
+                horizontalArrangement = Arrangement.spacedBy(itemSpacing),
+                pivotOffsets = androidx.tv.foundation.PivotOffsets(
+                    parentFraction = 0.0f,
+                    childFraction = 0.0f
+                )
+            ) {
+                itemsIndexed(items, key = { index, it -> "${it.mediaType.name}-${it.id}-$index" }) { index, item ->
+                    val yearValue = item.year.ifBlank { item.releaseDate?.take(4).orEmpty() }
+                    val yearDisplay = if (yearValue.isNotBlank()) " | $yearValue" else ""
+                    val mediaTypeLabel = when (item.mediaType) {
+                        MediaType.TV -> "TV Show"
+                        MediaType.MOVIE -> "Movie"
+                    }
+                    val displayItem = item.copy(subtitle = "$mediaTypeLabel$yearDisplay")
+                    MediaCard(
+                        item = displayItem,
+                        width = itemWidth,
+                        isLandscape = true,
+                        showProgress = false,
+                        isFocusedOverride = isCurrentRow && index == focusedItemIndex,
+                        enableSystemFocus = false,
+                        onFocused = { },
+                        onClick = { onItemClick(item) }
+                    )
+                }
+            }
         }
     }
 }

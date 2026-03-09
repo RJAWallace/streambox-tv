@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.watchlist
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.MediaItem
+import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.repository.WatchlistRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +20,8 @@ enum class ToastType {
 data class WatchlistUiState(
     val isLoading: Boolean = true,
     val items: List<MediaItem> = emptyList(),
+    val movieItems: List<MediaItem> = emptyList(),
+    val tvItems: List<MediaItem> = emptyList(),
     val error: String? = null,
     // Toast
     val toastMessage: String? = null,
@@ -33,6 +36,15 @@ class WatchlistViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(WatchlistUiState())
     val uiState: StateFlow<WatchlistUiState> = _uiState.asStateFlow()
 
+    /** Sets items + filtered movieItems/tvItems in one shot. */
+    private fun updateItems(state: WatchlistUiState, items: List<MediaItem>): WatchlistUiState {
+        return state.copy(
+            items = items,
+            movieItems = items.filter { it.mediaType == MediaType.MOVIE },
+            tvItems = items.filter { it.mediaType == MediaType.TV }
+        )
+    }
+
     init {
         // Show cached items instantly, then refresh in background
         loadWatchlistInstant()
@@ -44,8 +56,7 @@ class WatchlistViewModel @Inject constructor(
         viewModelScope.launch {
             watchlistRepository.watchlistItems.collect { items ->
                 if (items.isNotEmpty() || _uiState.value.items.isEmpty()) {
-                    _uiState.value = _uiState.value.copy(
-                        items = items,
+                    _uiState.value = updateItems(_uiState.value, items).copy(
                         isLoading = false
                     )
                 }
@@ -58,10 +69,7 @@ class WatchlistViewModel @Inject constructor(
             // Show cached items INSTANTLY (no loading state if we have cache)
             val cachedItems = watchlistRepository.getCachedItems()
             if (cachedItems.isNotEmpty()) {
-                _uiState.value = WatchlistUiState(
-                    isLoading = false,
-                    items = cachedItems
-                )
+                _uiState.value = updateItems(WatchlistUiState(isLoading = false), cachedItems)
             } else {
                 // Only show loading if no cache
                 _uiState.value = WatchlistUiState(isLoading = true)
@@ -85,10 +93,7 @@ class WatchlistViewModel @Inject constructor(
             // Show local items as soon as they're ready
             val localItems = localJob.await()
             if (localItems != null && localItems.isNotEmpty()) {
-                _uiState.value = WatchlistUiState(
-                    isLoading = false,
-                    items = localItems
-                )
+                _uiState.value = updateItems(WatchlistUiState(isLoading = false), localItems)
             }
             // Don't show empty state yet — wait for cloud pull to finish first
 
@@ -107,9 +112,8 @@ class WatchlistViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isLoading = true)
             try {
                 val items = watchlistRepository.refreshWatchlistItems()
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    items = items
+                _uiState.value = updateItems(_uiState.value, items).copy(
+                    isLoading = false
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -126,8 +130,7 @@ class WatchlistViewModel @Inject constructor(
             try {
                 // Optimistic update - remove from local state immediately
                 val updatedItems = _uiState.value.items.filter { it.id != item.id || it.mediaType != item.mediaType }
-                _uiState.value = _uiState.value.copy(
-                    items = updatedItems,
+                _uiState.value = updateItems(_uiState.value, updatedItems).copy(
                     toastMessage = "Removed from watchlist",
                     toastType = ToastType.SUCCESS
                 )
