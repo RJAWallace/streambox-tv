@@ -1152,6 +1152,30 @@ class HomeViewModel @Inject constructor(
     private var pendingForceRefreshCW = false
 
     fun refreshContinueWatchingOnly(forceRefresh: Boolean = false) {
+        // When force-refreshing (returning from player), immediately swap CW row
+        // with placeholders so user sees a loading state instead of stale data
+        // that visibly reorders a second later.
+        if (forceRefresh) {
+            val latestCats = _uiState.value.categories.toMutableList()
+            val cwIdx = latestCats.indexOfFirst { it.id == "continue_watching" }
+            if (cwIdx >= 0) {
+                val existing = latestCats[cwIdx]
+                val hasReal = existing.items.isNotEmpty() && existing.items.none { it.isPlaceholder }
+                if (hasReal) {
+                    val count = existing.items.size.coerceAtMost(HOME_PLACEHOLDER_ITEM_COUNT)
+                    val placeholders = (1..count).map { i ->
+                        MediaItem(id = -i, title = "", mediaType = MediaType.MOVIE, isPlaceholder = true)
+                    }
+                    latestCats[cwIdx] = Category(
+                        id = "continue_watching",
+                        title = "Continue Watching",
+                        items = placeholders
+                    )
+                    _uiState.value = _uiState.value.copy(categories = latestCats)
+                }
+            }
+        }
+
         // Don't cancel an in-progress fetch — cancelling mid-update can leave categories
         // in an inconsistent state causing crashes. Instead, queue a follow-up refresh.
         if (refreshContinueWatchingJob?.isActive == true) {
