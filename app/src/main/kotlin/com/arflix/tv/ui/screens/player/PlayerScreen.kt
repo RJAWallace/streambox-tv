@@ -1450,6 +1450,33 @@ fun PlayerScreen(
                         }
                     }
 
+                    // Handle source menu — close on back, let StreamSelector handle the rest
+                    if (showSourceMenu) {
+                        return@onPreviewKeyEvent when (event.key) {
+                            Key.Back, Key.Escape -> {
+                                showSourceMenu = false
+                                showControls = true
+                                coroutineScope.launch {
+                                    delay(150)
+                                    runCatching { sourceButtonFocusRequester.requestFocus() }
+                                }
+                                true
+                            }
+                            Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
+                                if (event.key == Key.MediaPause) {
+                                    exoPlayer.pause()
+                                } else if (event.key == Key.MediaPlay) {
+                                    exoPlayer.play()
+                                } else {
+                                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                }
+                                showControls = true
+                                true
+                            }
+                            else -> false // Let StreamSelector handle other keys
+                        }
+                    }
+
                     when (event.key) {
                         Key.Back, Key.Escape -> {
                             saveProgressNow() // Save exact timestamp on exit
