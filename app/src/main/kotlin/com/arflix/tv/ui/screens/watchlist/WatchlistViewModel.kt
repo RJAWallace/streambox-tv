@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.WatchProgress
+import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.WatchlistRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +24,7 @@ data class WatchlistUiState(
     val items: List<MediaItem> = emptyList(),
     val movieItems: List<MediaItem> = emptyList(),
     val tvItems: List<MediaItem> = emptyList(),
+    val showUnwatchedOnly: Boolean = false,
     val error: String? = null,
     // Toast
     val toastMessage: String? = null,
@@ -30,26 +33,57 @@ data class WatchlistUiState(
 
 @HiltViewModel
 class WatchlistViewModel @Inject constructor(
-    private val watchlistRepository: WatchlistRepository
+    private val watchlistRepository: WatchlistRepository,
+    private val traktRepository: TraktRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(WatchlistUiState())
     val uiState: StateFlow<WatchlistUiState> = _uiState.asStateFlow()
 
-    /** Sets items + filtered movieItems/tvItems in one shot. */
+    /** Sets items + filtered movieItems/tvItems in one shot, applying watched badges and filter. */
     private fun updateItems(state: WatchlistUiState, items: List<MediaItem>): WatchlistUiState {
+        val enriched = enrichWithWatchedStatus(items)
+        val filtered = if (state.showUnwatchedOnly) {
+            enriched.filter { it.watchProgress != WatchProgress.COMPLETED }
+        } else enriched
         return state.copy(
-            items = items,
-            movieItems = items.filter { it.mediaType == MediaType.MOVIE },
-            tvItems = items.filter { it.mediaType == MediaType.TV }
+            items = enriched,
+            movieItems = filtered.filter { it.mediaType == MediaType.MOVIE },
+            tvItems = filtered.filter { it.mediaType == MediaType.TV }
         )
     }
 
+    /** Enrich items with watched status from the watched cache. */
+    private fun enrichWithWatchedStatus(items: List<MediaItem>): List<MediaItem> {
+        return items.map { item ->
+            val progress = when (item.mediaType) {
+                MediaType.MOVIE -> if (traktRepository.isMovieWatched(item.id)) {
+                    WatchProgress.COMPLETED
+                } else WatchProgress.NONE
+                MediaType.TV -> {
+                    val watchedCount = traktRepository.getWatchedEpisodeCount(item.id)
+                    val totalEpisodes = item.totalEpisodes ?: 0
+                    when {
+                        watchedCount == 0 -> WatchProgress.NONE
+                        totalEpisodes > 0 && watchedCount >= totalEpisodes -> WatchProgress.COMPLETED
+                        else -> WatchProgress.IN_PROGRESS
+                    }
+                }
+            }
+            item.copy(
+                isWatched = progress == WatchProgress.COMPLETED,
+                watchProgress = progress
+            )
+        }
+    }
+
     init {
-        // Show cached items instantly, then refresh in background
         loadWatchlistInstant()
-        // Also observe the repository's StateFlow for live updates
         observeWatchlistChanges()
+        // Initialize watched cache for badge rendering
+        viewModelScope.launch {
+            try { traktRepository.initializeWatchedCache() } catch (_: Exception) {}
+        }
     }
 
     private fun observeWatchlistChanges() {
@@ -66,16 +100,13 @@ class WatchlistViewModel @Inject constructor(
 
     private fun loadWatchlistInstant() {
         viewModelScope.launch {
-            // Show cached items INSTANTLY (no loading state if we have cache)
             val cachedItems = watchlistRepository.getCachedItems()
             if (cachedItems.isNotEmpty()) {
                 _uiState.value = updateItems(WatchlistUiState(isLoading = false), cachedItems)
             } else {
-                // Only show loading if no cache
                 _uiState.value = WatchlistUiState(isLoading = true)
             }
 
-            // Run local load AND cloud pull IN PARALLEL for faster results
             val localJob = async {
                 try {
                     watchlistRepository.getWatchlistItems()
@@ -86,25 +117,28 @@ class WatchlistViewModel @Inject constructor(
             val cloudJob = async {
                 try {
                     watchlistRepository.pullWatchlistFromCloud()
-                    // Cloud pull updates via StateFlow observer
                 } catch (_: Exception) {}
             }
 
-            // Show local items as soon as they're ready
             val localItems = localJob.await()
             if (localItems != null && localItems.isNotEmpty()) {
                 _uiState.value = updateItems(WatchlistUiState(isLoading = false), localItems)
             }
-            // Don't show empty state yet — wait for cloud pull to finish first
 
-            // Cloud pull completes; StateFlow observer handles UI updates
             cloudJob.await()
 
-            // Now if still empty after both loads, it's genuinely empty
             if (_uiState.value.items.isEmpty()) {
                 _uiState.value = _uiState.value.copy(isLoading = false)
             }
         }
+    }
+
+    fun toggleUnwatchedFilter() {
+        val newFilter = !_uiState.value.showUnwatchedOnly
+        _uiState.value = updateItems(
+            _uiState.value.copy(showUnwatchedOnly = newFilter),
+            _uiState.value.items
+        )
     }
 
     fun refresh() {
@@ -128,13 +162,11 @@ class WatchlistViewModel @Inject constructor(
     fun removeFromWatchlist(item: MediaItem) {
         viewModelScope.launch {
             try {
-                // Optimistic update - remove from local state immediately
                 val updatedItems = _uiState.value.items.filter { it.id != item.id || it.mediaType != item.mediaType }
                 _uiState.value = updateItems(_uiState.value, updatedItems).copy(
                     toastMessage = "Removed from watchlist",
                     toastType = ToastType.SUCCESS
                 )
-                // Then sync to backend
                 watchlistRepository.removeFromWatchlist(item.mediaType, item.id)
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -149,5 +181,3 @@ class WatchlistViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(toastMessage = null)
     }
 }
-
-

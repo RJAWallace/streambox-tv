@@ -1,6 +1,9 @@
 package com.arflix.tv.ui.screens.watchlist
 
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,6 +12,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -38,6 +42,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.foundation.lazy.list.TvLazyRow
@@ -101,6 +106,8 @@ fun WatchlistScreen(
     var tvItemIndex by remember { mutableIntStateOf(0) }
     val movieRowState = rememberTvLazyListState()
     val tvRowState = rememberTvLazyListState()
+    // Filter toggle focus state
+    var isFilterFocused by remember { mutableStateOf(false) }
 
     // Determine which rows are visible
     val hasMovies = uiState.movieItems.isNotEmpty()
@@ -158,12 +165,17 @@ fun WatchlistScreen(
                             if (isSidebarFocused) {
                                 onBack()
                             } else {
+                                isFilterFocused = false
                                 isSidebarFocused = true
                             }
                             true
                         }
                         Key.DirectionLeft -> {
-                            if (!isSidebarFocused) {
+                            if (isFilterFocused) {
+                                isFilterFocused = false
+                                isSidebarFocused = true
+                                true
+                            } else if (!isSidebarFocused) {
                                 val idx = currentItemIndex()
                                 if (idx <= 0) {
                                     isSidebarFocused = true
@@ -179,6 +191,7 @@ fun WatchlistScreen(
                             if (isSidebarFocused) {
                                 if (hasContent) {
                                     isSidebarFocused = false
+                                    isFilterFocused = false
                                     // Point to whichever row has items
                                     if (!hasMovies && hasTv) currentRowIndex = 1
                                     else if (hasMovies) currentRowIndex = 0
@@ -197,13 +210,17 @@ fun WatchlistScreen(
                             if (isSidebarFocused) {
                                 sidebarFocusIndex = (sidebarFocusIndex - 1).coerceIn(0, maxSidebarIndex)
                                 true
+                            } else if (isFilterFocused) {
+                                isFilterFocused = false
+                                isSidebarFocused = true
+                                true
                             } else {
                                 if (currentRowIndex == 1 && hasMovies) {
                                     currentRowIndex = 0
                                     true
                                 } else {
-                                    // At top row — go to sidebar
-                                    isSidebarFocused = true
+                                    // At top row — go to filter toggle
+                                    isFilterFocused = true
                                     true
                                 }
                             }
@@ -211,6 +228,9 @@ fun WatchlistScreen(
                         Key.DirectionDown -> {
                             if (isSidebarFocused) {
                                 sidebarFocusIndex = (sidebarFocusIndex + 1).coerceIn(0, maxSidebarIndex)
+                                true
+                            } else if (isFilterFocused) {
+                                isFilterFocused = false
                                 true
                             } else {
                                 if (currentRowIndex == 0 && hasTv) {
@@ -222,7 +242,10 @@ fun WatchlistScreen(
                             }
                         }
                         Key.Enter, Key.DirectionCenter -> {
-                            if (isSidebarFocused) {
+                            if (isFilterFocused) {
+                                viewModel.toggleUnwatchedFilter()
+                                true
+                            } else if (isSidebarFocused) {
                                 if (hasProfile && sidebarFocusIndex == 0) {
                                     onSwitchProfile()
                                 } else {
@@ -278,7 +301,7 @@ fun WatchlistScreen(
                     .fillMaxSize()
                     .padding(start = 24.dp, top = 32.dp, end = 48.dp)
             ) {
-                // Header with pink bookmark icon
+                // Header with pink bookmark icon + filter toggle
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(bottom = 24.dp)
@@ -294,6 +317,13 @@ fun WatchlistScreen(
                         text = "MY WATCHLIST",
                         style = ArflixTypography.sectionTitle,
                         color = TextPrimary
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    // Unwatched-only toggle
+                    WatchlistFilterToggle(
+                        showUnwatchedOnly = uiState.showUnwatchedOnly,
+                        isFocused = isFilterFocused,
+                        onToggle = { viewModel.toggleUnwatchedFilter() }
                     )
                 }
 
@@ -404,6 +434,8 @@ private fun WatchlistRow(
     val itemSpacing = 16.dp
     val rowStartPadding = if (isCompactHeight) 12.dp else 16.dp
     val rowEndPadding = if (isCompactHeight) 120.dp else 160.dp
+    val density = LocalDensity.current
+    val peekOffsetPx = remember(density) { with(density) { 35.dp.roundToPx() } }
     var lastScrollIndex by remember { mutableIntStateOf(-1) }
 
     LaunchedEffect(isCurrentRow) {
@@ -413,7 +445,8 @@ private fun WatchlistRow(
         if (!isCurrentRow || items.isEmpty()) return@LaunchedEffect
         val targetIndex = focusedItemIndex.coerceIn(0, items.lastIndex)
         if (lastScrollIndex == targetIndex) return@LaunchedEffect
-        rowState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
+        val peek = if (targetIndex > 0) -peekOffsetPx else 0
+        rowState.animateScrollToItem(index = targetIndex, scrollOffset = peek)
         lastScrollIndex = targetIndex
     }
 
@@ -461,6 +494,81 @@ private fun WatchlistRow(
                         onClick = { onItemClick(item) }
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Animated toggle for "All" vs "Unwatched Only" filter.
+ */
+@Composable
+private fun WatchlistFilterToggle(
+    showUnwatchedOnly: Boolean,
+    isFocused: Boolean = false,
+    onToggle: () -> Unit
+) {
+    val animatedOffset by animateDpAsState(
+        targetValue = if (showUnwatchedOnly) 56.dp else 0.dp,
+        animationSpec = tween(durationMillis = 250),
+        label = "toggleOffset"
+    )
+    val borderColor = if (isFocused) Pink else Color.Transparent
+    val bgAlpha = if (isFocused) 0.15f else 0.08f
+
+    Box(
+        modifier = Modifier
+            .height(32.dp)
+            .background(
+                color = Color.White.copy(alpha = bgAlpha),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+            )
+            .then(
+                if (isFocused) Modifier.border(
+                    width = 2.dp,
+                    color = borderColor,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+                ) else Modifier
+            )
+            .padding(horizontal = 3.dp, vertical = 3.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        // Sliding indicator
+        Box(
+            modifier = Modifier
+                .offset(x = animatedOffset)
+                .width(if (showUnwatchedOnly) 82.dp else 40.dp)
+                .height(26.dp)
+                .background(
+                    color = Pink.copy(alpha = 0.9f),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(13.dp)
+                )
+        )
+        // Labels
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .width(56.dp)
+                    .height(26.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "All",
+                    style = ArflixTypography.caption,
+                    color = if (!showUnwatchedOnly) Color.White else Color.White.copy(alpha = 0.5f)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .width(82.dp)
+                    .height(26.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Unwatched",
+                    style = ArflixTypography.caption,
+                    color = if (showUnwatchedOnly) Color.White else Color.White.copy(alpha = 0.5f)
+                )
             }
         }
     }

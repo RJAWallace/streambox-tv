@@ -1107,7 +1107,7 @@ class PlayerViewModel @Inject constructor(
     /**
      * Select a stream for playback
      */
-    fun selectStream(stream: StreamSource) {
+    fun selectStream(stream: StreamSource, resumeFromMs: Long = 0L) {
         viewModelScope.launch {
             var selectedOriginal = stream
             var resolvedStream = runCatching {
@@ -1170,10 +1170,13 @@ class PlayerViewModel @Inject constructor(
             }
 
             // Direct URL - use immediately (ExoPlayer handles redirects)
+            // Preserve current playback position when manually switching sources
+            val resumePos = if (resumeFromMs > 0L) resumeFromMs else _uiState.value.savedPosition
             _uiState.value = _uiState.value.copy(
                 selectedStream = resolvedStream,
                 selectedStreamUrl = url,
-                streamSelectionNonce = _uiState.value.streamSelectionNonce + 1
+                streamSelectionNonce = _uiState.value.streamSelectionNonce + 1,
+                savedPosition = resumePos
             )
 
             // Refresh subtitles with stream-specific hints (videoHash/videoSize) for better matching,

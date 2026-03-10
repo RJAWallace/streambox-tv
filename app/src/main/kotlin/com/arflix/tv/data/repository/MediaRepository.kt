@@ -990,7 +990,15 @@ class MediaRepository @Inject constructor(
         detailsCache[cacheKey] = CacheEntry(item, System.currentTimeMillis())
         return item
     }
-    
+
+    /** Check if a TV show has a Specials season (Season 0) with episodes. */
+    suspend fun hasSpecialsSeason(tvId: Int): Boolean {
+        return try {
+            val details = tmdbApi.getTvDetails(tvId, apiKey)
+            details.seasons.any { it.seasonNumber == 0 && it.episodeCount > 0 }
+        } catch (_: Exception) { false }
+    }
+
     /**
      * Get season episodes with Trakt watched status
      */

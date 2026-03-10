@@ -1199,12 +1199,29 @@ class HomeViewModel @Inject constructor(
                     return@launch
                 }
 
-                // Load Continue Watching from Supabase (sole source of truth)
-                val resolvedContinueWatching = try {
-                    loadContinueWatchingFromHistory()
+                // Phase 1: Load raw from Supabase (fast, no TMDB enrichment ~500ms)
+                val rawCwItems = try {
+                    loadContinueWatchingFromHistoryRaw()
                 } catch (_: Exception) {
                     emptyList()
                 }
+                // Merge with cached enriched data for descriptions (in-memory, instant)
+                val resolvedContinueWatching = if (rawCwItems.isNotEmpty()) {
+                    val cachedEnriched = traktRepository.getCachedContinueWatching()
+                    val enrichedById = cachedEnriched.associateBy { it.id }
+                    rawCwItems.map { raw ->
+                        val cached = enrichedById[raw.id]
+                        if (cached != null && cached.overview.isNotEmpty()) {
+                            raw.copy(
+                                overview = cached.overview,
+                                year = cached.year.ifEmpty { raw.year },
+                                imdbRating = cached.imdbRating.ifEmpty { raw.imdbRating },
+                                duration = cached.duration.ifEmpty { raw.duration },
+                                episodeTitle = raw.episodeTitle ?: cached.episodeTitle
+                            )
+                        } else raw
+                    }
+                } else emptyList()
 
                 if (resolvedContinueWatching.isNotEmpty()) {
                     val mergedContinueWatching = mergeContinueWatchingResumeData(resolvedContinueWatching)
@@ -1281,6 +1298,29 @@ class HomeViewModel @Inject constructor(
                         }
                     }
                     refreshWatchedBadges()
+
+                    // Phase 2: Enrich with TMDB in background (adds overview/year/rating)
+                    viewModelScope.launch {
+                        val enrichedItems = try {
+                            traktRepository.enrichContinueWatchingItems(rawCwItems)
+                        } catch (_: Exception) { rawCwItems }
+                        val mergedEnriched = mergeContinueWatchingResumeData(enrichedItems)
+                        val enrichedCategory = Category(
+                            id = "continue_watching",
+                            title = "Continue Watching",
+                            items = mergedEnriched.map { it.toMediaItem() }.deduplicateItems()
+                        )
+                        enrichedCategory.items.forEach { mediaRepository.cacheItem(it) }
+                        lastContinueWatchingItems = enrichedCategory.items
+                        lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
+                        try { traktRepository.updateContinueWatchingCache(mergedEnriched) } catch (_: Exception) {}
+                        val enrichedCategories = _uiState.value.categories.toMutableList()
+                        val enrichedIdx = enrichedCategories.indexOfFirst { it.id == "continue_watching" }
+                        if (enrichedIdx >= 0 && enrichedCategories[enrichedIdx].items != enrichedCategory.items) {
+                            enrichedCategories[enrichedIdx] = enrichedCategory
+                            _uiState.value = _uiState.value.copy(categories = enrichedCategories)
+                        }
+                    }
                 } else {
                     // No new data from any source
                     val latestCategories = _uiState.value.categories.toMutableList()

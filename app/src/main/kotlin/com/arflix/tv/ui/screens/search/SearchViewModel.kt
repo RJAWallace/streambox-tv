@@ -4,7 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.WatchProgress
 import com.arflix.tv.data.repository.MediaRepository
+import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.util.RemoteCrashLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -35,13 +37,44 @@ data class SearchUiState(
 
 @HiltViewModel
 class SearchViewModel @Inject constructor(
-    private val mediaRepository: MediaRepository
+    private val mediaRepository: MediaRepository,
+    private val traktRepository: TraktRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
 
     private var searchJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            try { traktRepository.initializeWatchedCache() } catch (_: Exception) {}
+        }
+    }
+
+    /** Enrich items with watched status from the watched cache. */
+    private fun enrichWithWatchedStatus(items: List<MediaItem>): List<MediaItem> {
+        return items.map { item ->
+            val progress = when (item.mediaType) {
+                MediaType.MOVIE -> if (traktRepository.isMovieWatched(item.id)) {
+                    WatchProgress.COMPLETED
+                } else WatchProgress.NONE
+                MediaType.TV -> {
+                    val watchedCount = traktRepository.getWatchedEpisodeCount(item.id)
+                    val totalEpisodes = item.totalEpisodes ?: 0
+                    when {
+                        watchedCount == 0 -> WatchProgress.NONE
+                        totalEpisodes > 0 && watchedCount >= totalEpisodes -> WatchProgress.COMPLETED
+                        watchedCount > 0 -> WatchProgress.IN_PROGRESS
+                        else -> WatchProgress.NONE
+                    }
+                }
+            }
+            if (progress != item.watchProgress) {
+                item.copy(isWatched = progress == WatchProgress.COMPLETED, watchProgress = progress)
+            } else item
+        }
+    }
 
     fun addChar(char: String) {
         _uiState.value = _uiState.value.copy(
@@ -139,9 +172,10 @@ class SearchViewModel @Inject constructor(
                     )
                 }
 
-                // Separate into movies and TV shows
-                val movies = results.filter { it.mediaType == MediaType.MOVIE }
-                val tvShows = results.filter { it.mediaType == MediaType.TV }
+                // Enrich with watched status and separate into movies and TV shows
+                val enrichedResults = enrichWithWatchedStatus(results)
+                val movies = enrichedResults.filter { it.mediaType == MediaType.MOVIE }
+                val tvShows = enrichedResults.filter { it.mediaType == MediaType.TV }
                 val topForLogos = (movies.take(16) + tvShows.take(16)).distinctBy { "${it.mediaType}_${it.id}" }
                 val logoMap = withContext(Dispatchers.IO) {
                     topForLogos.map { item ->
@@ -159,7 +193,7 @@ class SearchViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     hasSearched = true,
-                    results = results,
+                    results = enrichedResults,
                     movieResults = movies,
                     tvResults = tvShows,
                     cardLogoUrls = logoMap,

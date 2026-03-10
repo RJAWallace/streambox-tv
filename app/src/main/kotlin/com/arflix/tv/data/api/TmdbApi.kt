@@ -207,7 +207,15 @@ data class TmdbTvDetails(
     @SerializedName("number_of_episodes") val numberOfEpisodes: Int = 0,
     @SerializedName("episode_run_time") val episodeRunTime: List<Int> = emptyList(),
     val status: String? = null,
-    val genres: List<TmdbGenre> = emptyList()
+    val genres: List<TmdbGenre> = emptyList(),
+    val seasons: List<TmdbSeasonSummary> = emptyList()
+)
+
+data class TmdbSeasonSummary(
+    val id: Int = 0,
+    @SerializedName("season_number") val seasonNumber: Int = 0,
+    val name: String? = null,
+    @SerializedName("episode_count") val episodeCount: Int = 0
 )
 
 data class TmdbSeasonDetails(

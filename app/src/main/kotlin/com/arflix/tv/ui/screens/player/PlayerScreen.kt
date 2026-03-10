@@ -233,6 +233,8 @@ fun PlayerScreen(
     var triedStreamIndexes by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var isAutoAdvancing by remember { mutableStateOf(false) }
     var lastProgressReportSecond by remember { mutableLongStateOf(-1L) }
+    // Debrid error stream detection (short-duration static image/popup streams)
+    var debridCheckDone by remember { mutableStateOf(false) }
     // Guard against accessing a released ExoPlayer from long-running coroutines (can crash on some devices).
     var playerReleased by remember { mutableStateOf(false) }
 
@@ -766,6 +768,7 @@ fun PlayerScreen(
             streamSelectedTime = System.currentTimeMillis()
             bufferingStartTime = null
             hasPlaybackStarted = false  // Reset for new stream
+            debridCheckDone = false  // Reset debrid detection for new stream
             playbackIssueReported = false
             rebufferRecoverAttempted = false
             longRebufferCount = 0
@@ -1197,6 +1200,23 @@ fun PlayerScreen(
                 exoPlayer.currentPosition > 100L
             ) {
                 hasPlaybackStarted = true
+            }
+
+            // Debrid error stream detection: short-duration streams (≤90s) are likely
+            // static "failed opening torrent" or "being downloaded to debrid" popup images.
+            // Auto-skip to next source when detected.
+            if (hasPlaybackStarted && !debridCheckDone && duration > 0L && duration != C.TIME_UNSET) {
+                debridCheckDone = true
+                val durationSec = duration / 1000L
+                if (durationSec <= 90L && !userSelectedSourceManually) {
+                    System.err.println("[Player] Debrid error detected: stream duration=${durationSec}s, auto-skipping to next source")
+                    if (tryAdvanceToNextStream()) {
+                        // Successfully advanced — next iteration will handle new stream
+                        delay(1000)
+                        continue
+                    }
+                    // No more sources to try — let user see whatever is playing
+                }
             }
 
             if (currentPosition > 0 && duration > 0) {
@@ -2258,7 +2278,8 @@ fun PlayerScreen(
                 startupUrlLock = null
                 rebufferRecoverAttempted = false
                 longRebufferCount = 0
-                viewModel.selectStream(stream)
+                val currentPos = runCatching { exoPlayer.currentPosition }.getOrDefault(0L)
+                viewModel.selectStream(stream, resumeFromMs = currentPos)
                 showSourceMenu = false
                 showControls = true
                 coroutineScope.launch {

@@ -1597,7 +1597,7 @@ class TraktRepository @Inject constructor(
                     enrichLocalContinueWatchingItem(item)
                 }
             }
-        }.awaitAll()
+        }.awaitAll().filterNotNull()
     }
 
     /**
@@ -1613,16 +1613,16 @@ class TraktRepository @Inject constructor(
                     enrichLocalContinueWatchingItem(item)
                 }
             }
-        }.awaitAll()
+        }.awaitAll().filterNotNull()
     }
 
     /**
      * Enrich a local Continue Watching item with TMDB data
      * Matches the Trakt enrichment behavior: uses SHOW backdrop/overview, not episode
      */
-    private suspend fun enrichLocalContinueWatchingItem(item: ContinueWatchingItem): ContinueWatchingItem {
+    private suspend fun enrichLocalContinueWatchingItem(item: ContinueWatchingItem): ContinueWatchingItem? {
         // Skip if already enriched (has overview and backdrop with full URL)
-        if (item.overview.isNotEmpty() && item.backdropPath?.startsWith("http") == true) return item
+        if (item.overview.isNotEmpty() && item.backdropPath?.startsWith("http") == true && !item.isUpNext) return item
 
         val apiKey = Constants.TMDB_API_KEY
         return try {
@@ -1631,11 +1631,44 @@ class TraktRepository @Inject constructor(
                     tmdbApi.getTvDetails(item.id, apiKey)
                 } catch (_: Exception) { null }
 
+                // For "up next" items, validate that the suggested episode actually exists
+                var resolvedItem = item
+                if (item.isUpNext && item.season != null && item.episode != null) {
+                    val seasonDetails = try {
+                        tmdbApi.getTvSeason(item.id, item.season, apiKey)
+                    } catch (_: Exception) { null }
+
+                    val episodeExists = seasonDetails?.episodes?.any { it.episodeNumber == item.episode } == true
+                    if (!episodeExists) {
+                        // Episode doesn't exist in current season — try first episode of next season
+                        val totalSeasons = details?.numberOfSeasons ?: 0
+                        if (item.season < totalSeasons) {
+                            val nextSeasonDetails = try {
+                                tmdbApi.getTvSeason(item.id, item.season + 1, apiKey)
+                            } catch (_: Exception) { null }
+                            val firstEp = nextSeasonDetails?.episodes?.minByOrNull { it.episodeNumber }
+                            if (firstEp != null) {
+                                resolvedItem = item.copy(
+                                    season = item.season + 1,
+                                    episode = firstEp.episodeNumber,
+                                    episodeTitle = firstEp.name
+                                )
+                            } else {
+                                return null // No more episodes — remove from CW
+                            }
+                        } else {
+                            return null // No more seasons — show finished, remove from CW
+                        }
+                    }
+                }
+
                 // Get episode info for episode title only (not for backdrop/overview)
-                val episodeInfo = if (item.season != null && item.episode != null && item.episodeTitle.isNullOrEmpty()) {
+                val resolvedSeason = resolvedItem.season
+                val resolvedEpisode = resolvedItem.episode
+                val episodeInfo = if (resolvedSeason != null && resolvedEpisode != null && resolvedItem.episodeTitle.isNullOrEmpty()) {
                     try {
-                        val seasonDetails = tmdbApi.getTvSeason(item.id, item.season, apiKey)
-                        seasonDetails.episodes.find { it.episodeNumber == item.episode }
+                        val seasonDetails = tmdbApi.getTvSeason(resolvedItem.id, resolvedSeason, apiKey)
+                        seasonDetails.episodes.find { it.episodeNumber == resolvedEpisode }
                     } catch (_: Exception) { null }
                 } else null
 
@@ -1643,14 +1676,14 @@ class TraktRepository @Inject constructor(
                 val backdropUrl = details?.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
                 val posterUrl = details?.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
 
-                item.copy(
+                resolvedItem.copy(
                     overview = details?.overview ?: "",  // Show overview, not episode
-                    backdropPath = backdropUrl ?: item.backdropPath,  // Show backdrop, not episode still
-                    posterPath = posterUrl ?: item.posterPath,
-                    year = details?.firstAirDate?.take(4) ?: item.year,
+                    backdropPath = backdropUrl ?: resolvedItem.backdropPath,  // Show backdrop, not episode still
+                    posterPath = posterUrl ?: resolvedItem.posterPath,
+                    year = details?.firstAirDate?.take(4) ?: resolvedItem.year,
                     imdbRating = details?.voteAverage?.let { String.format("%.1f", it) } ?: "",
                     duration = details?.episodeRunTime?.firstOrNull()?.let { "${it}m" } ?: "",
-                    episodeTitle = item.episodeTitle ?: episodeInfo?.name
+                    episodeTitle = resolvedItem.episodeTitle ?: episodeInfo?.name
                 )
             } else {
                 val details = try {

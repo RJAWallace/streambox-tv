@@ -45,6 +45,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -437,6 +438,8 @@ private fun SearchResultRow(
     val itemSpacing = 16.dp
     val rowStartPadding = if (isCompactHeight) 12.dp else 16.dp
     val rowEndPadding = if (isCompactHeight) 120.dp else 160.dp
+    val density = LocalDensity.current
+    val peekOffsetPx = remember(density) { with(density) { 35.dp.roundToPx() } }
     var lastScrollIndex by remember { mutableIntStateOf(-1) }
 
     LaunchedEffect(isCurrentRow) {
@@ -448,7 +451,8 @@ private fun SearchResultRow(
         if (!isCurrentRow || items.isEmpty()) return@LaunchedEffect
         val targetIndex = focusedItemIndex.coerceIn(0, items.lastIndex)
         if (lastScrollIndex == targetIndex) return@LaunchedEffect
-        rowState.animateScrollToItem(index = targetIndex, scrollOffset = 0)
+        val peek = if (targetIndex > 0) -peekOffsetPx else 0
+        rowState.animateScrollToItem(index = targetIndex, scrollOffset = peek)
         lastScrollIndex = targetIndex
     }
 

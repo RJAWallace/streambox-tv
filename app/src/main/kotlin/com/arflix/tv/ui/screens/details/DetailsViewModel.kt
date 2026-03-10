@@ -42,6 +42,7 @@ data class DetailsUiState(
     val trailerKey: String? = null,
     val episodes: List<Episode> = emptyList(),
     val totalSeasons: Int = 1,
+    val hasSpecials: Boolean = false,
     val currentSeason: Int = 1,
     val cast: List<CastMember> = emptyList(),
     val similar: List<MediaItem> = emptyList(),
@@ -266,9 +267,12 @@ class DetailsViewModel @Inject constructor(
                     async { mediaRepository.getSeasonEpisodes(mediaId, seasonToLoad) }
                 } else null
 
-                // For TV shows, fetch season progress (watched/total per season)
+                // For TV shows, fetch season progress and check for Specials (Season 0)
                 val seasonProgressDeferred = if (mediaType == MediaType.TV) {
                     async { fetchSeasonProgress(mediaId) }
+                } else null
+                val specialsDeferred = if (mediaType == MediaType.TV) {
+                    async { mediaRepository.hasSpecialsSeason(mediaId) }
                 } else null
 
                 val item = runCatching { itemDeferred.await() }.getOrNull() ?: initialItem
@@ -318,11 +322,15 @@ class DetailsViewModel @Inject constructor(
                     totalSeasons
                 }
 
+                // Check if specials season exists (non-blocking — default false if not ready)
+                val hasSpecials = runCatching { specialsDeferred?.await() }.getOrNull() == true
+
                 // Show content with episodes + season progress included — fully loaded
                 val baseState = _uiState.value.copy(
                     isLoading = false,
                     item = mergedItem,
                     totalSeasons = resolvedTotalSeasons,
+                    hasSpecials = hasSpecials,
                     currentSeason = seasonToLoad,
                     episodes = enrichedEpisodes,
                     seasonProgress = seasonProgress,
@@ -1010,8 +1018,10 @@ class DetailsViewModel @Inject constructor(
                     cachedCountsBySeason[seasonNum] = (cachedCountsBySeason[seasonNum] ?: 0) + 1
                 }
 
-                // Fetch all season details in parallel
-                val seasonResults = (1..numSeasons).map { seasonNum ->
+                // Fetch all season details in parallel (include Season 0/Specials if present)
+                val hasSpecials = tvDetails.seasons.any { it.seasonNumber == 0 && it.episodeCount > 0 }
+                val seasonRange = if (hasSpecials) (listOf(0) + (1..numSeasons).toList()) else (1..numSeasons).toList()
+                val seasonResults = seasonRange.map { seasonNum ->
                     async {
                         try {
                             val seasonDetails = tmdbApi.getTvSeason(tmdbId, seasonNum, Constants.TMDB_API_KEY)

@@ -283,7 +283,9 @@ fun DetailsScreen(
     // from the currently loaded season (e.g., resume info resolves to S7 but S1 was loaded).
     LaunchedEffect(uiState.initialSeasonIndex) {
         seasonIndex = uiState.initialSeasonIndex
-        val targetSeason = uiState.initialSeasonIndex + 1
+        // Map UI index to season number (Specials = season 0 at end)
+        val targetSeason = if (uiState.hasSpecials && uiState.initialSeasonIndex == uiState.totalSeasons) 0
+            else uiState.initialSeasonIndex + 1
         if (targetSeason != uiState.currentSeason && uiState.episodes.isNotEmpty()) {
             viewModel.loadSeason(targetSeason)
         }
@@ -357,7 +359,7 @@ fun DetailsScreen(
                                     FocusSection.BUTTONS -> FocusSection.BUTTONS  // Stay on buttons (top)
                                     FocusSection.SEASONS -> FocusSection.BUTTONS  // Go up to buttons
                                     FocusSection.EPISODES -> {
-                                        if (isTV && uiState.totalSeasons > 1) FocusSection.SEASONS else FocusSection.BUTTONS
+                                        if (isTV && (uiState.totalSeasons > 1 || uiState.hasSpecials)) FocusSection.SEASONS else FocusSection.BUTTONS
                                     }
                                     FocusSection.CAST -> {
                                         if (isTV) FocusSection.EPISODES
@@ -382,7 +384,7 @@ fun DetailsScreen(
                                 val hasSimilar = uiState.similar.isNotEmpty()
                                 focusedSection = when (focusedSection) {
                                     FocusSection.BUTTONS -> {
-                                        if (isTV && hasEpisodes && uiState.totalSeasons > 1) FocusSection.SEASONS
+                                        if (isTV && hasEpisodes && (uiState.totalSeasons > 1 || uiState.hasSpecials)) FocusSection.SEASONS
                                         else if (isTV && hasEpisodes) FocusSection.EPISODES
                                         else if (hasCast) FocusSection.CAST
                                         else if (hasReviews) FocusSection.REVIEWS
@@ -516,7 +518,9 @@ fun DetailsScreen(
                                 }
                                 FocusSection.SEASONS -> {
                                     episodeIndex = 0  // Reset to first episode when changing season
-                                    viewModel.loadSeason(seasonIndex + 1)
+                                    // Map UI index to season number (Specials = season 0 at end)
+                                    val seasonNum = if (uiState.hasSpecials && seasonIndex == uiState.totalSeasons) 0 else seasonIndex + 1
+                                    viewModel.loadSeason(seasonNum)
                                 }
                                 FocusSection.CAST -> {
                                     val member = uiState.cast.getOrNull(castIndex)
@@ -585,7 +589,8 @@ fun DetailsScreen(
                     genres = uiState.genres,
                     seasonProgress = uiState.seasonProgress,
                     playLabel = uiState.playLabel,
-                    usePosterCards = usePosterCards
+                    usePosterCards = usePosterCards,
+                    hasSpecials = uiState.hasSpecials
                 )
             }
         }
@@ -872,7 +877,10 @@ private fun handleRight(
     when (section) {
         FocusSection.BUTTONS -> if (buttonIdx < 4) setButton(buttonIdx + 1)
         FocusSection.EPISODES -> if (episodeIdx < uiState.episodes.size - 1) setEpisode(episodeIdx + 1)
-        FocusSection.SEASONS -> if (seasonIdx < uiState.totalSeasons - 1) setSeason(seasonIdx + 1)
+        FocusSection.SEASONS -> {
+            val maxSeasonIdx = uiState.totalSeasons - 1 + (if (uiState.hasSpecials) 1 else 0)
+            if (seasonIdx < maxSeasonIdx) setSeason(seasonIdx + 1)
+        }
         FocusSection.CAST -> if (castIdx < uiState.cast.size - 1) setCast(castIdx + 1)
         FocusSection.REVIEWS -> if (reviewIdx < uiState.reviews.size - 1) setReview(reviewIdx + 1)
         FocusSection.SIMILAR -> if (similarIdx < uiState.similar.size - 1) setSimilar(similarIdx + 1)
@@ -903,7 +911,8 @@ private fun DetailsContent(
     genres: List<String> = emptyList(),
     seasonProgress: Map<Int, Pair<Int, Int>> = emptyMap(),
     playLabel: String? = null,
-    usePosterCards: Boolean = false
+    usePosterCards: Boolean = false,
+    hasSpecials: Boolean = false
 ) {
     // === PREMIUM LAYERED TEXT SHADOWS ===
     val textShadow = Shadow(
@@ -1227,7 +1236,7 @@ private fun DetailsContent(
         // Calculate section indices dynamically
         val isTV = item.mediaType == MediaType.TV
         val hasEpisodes = isTV && episodes.isNotEmpty()
-        val hasSeasons = isTV && totalSeasons > 1
+        val hasSeasons = isTV && (totalSeasons > 1 || hasSpecials)
         val hasCast = cast.isNotEmpty()
         val hasReviews = reviews.isNotEmpty()
         val hasSimilar = similar.isNotEmpty()
@@ -1293,15 +1302,20 @@ private fun DetailsContent(
         ) {
             // Season buttons row (above episodes)
             if (item.mediaType == MediaType.TV && episodes.isNotEmpty()) {
-                if (totalSeasons > 1) {
+                val showSeasonRow = totalSeasons > 1 || hasSpecials
+                if (showSeasonRow) {
                     item {
                         val seasonRowState = rememberTvLazyListState()
-                        val seasonItems = remember(totalSeasons) { (1..totalSeasons).toList() }
+                        // Regular seasons + Specials (Season 0) at the end if available
+                        val seasonItems = remember(totalSeasons, hasSpecials) {
+                            val list = (1..totalSeasons).toList()
+                            if (hasSpecials) list + 0 else list
+                        }
                         HomeStyleRowAutoScroll(
                             rowState = seasonRowState,
                             isCurrentRow = focusedSection == FocusSection.SEASONS,
                             focusedItemIndex = seasonIndex,
-                            totalItems = totalSeasons,
+                            totalItems = seasonItems.size,
                             itemWidth = 120.dp,
                             itemSpacing = 8.dp
                         )
@@ -1975,7 +1989,7 @@ private fun SeasonButton(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = "Season $season",
+            text = if (season == 0) "Specials" else "Season $season",
             style = ArvioSkin.typography.button.copy(
                 fontSize = 13.sp,
                 fontWeight = if (isFocused || isSelected) FontWeight.Bold else FontWeight.Medium,
